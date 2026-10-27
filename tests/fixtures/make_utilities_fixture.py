@@ -3,7 +3,8 @@
 Run (database up, after `make ingest` and `make utilities`):
     uv run python tests/fixtures/make_utilities_fixture.py
 
-Sources, copied unchanged for the parcels below and every parcel sharing their plats:
+Sources, copied unchanged for the parcels below and every parcel sharing their plats
+(shapes included, since the fallback uses each plat's median lot size):
 - parcel shapes: county "Tax Parcel Boundaries" (config county.boundaries)
 - legal descriptions: county "Tax Parcel Ownership Data" (config county.owners)
 - year built: the NC OneMap 2026-01-07 snapshot in nconemap_parcels_snapshots (its raw
@@ -27,8 +28,11 @@ OUT = Path(__file__).with_name("meck_utilities")
 
 PINS = {
     "08920128": "443 Dawn Cir: plat M73-876, first home 2023 -> served (low)",
-    "03141608": "2137 Tom Sadler Rd: plat M69-548 with no home in the Jan 2026 snapshot -> unknown",
-    "04104279": "3200 Auten Ave: plat M76-221 with no home in the Jan 2026 snapshot -> unknown",
+    "03141608": "2137 Tom Sadler Rd: plat M69-548, no home in the Jan 2026 snapshot; in Charlotte, small lots -> fallback",
+    "04104279": "3200 Auten Ave: plat M76-221, no home in the Jan 2026 snapshot; in Charlotte, small lots -> fallback",
+    "05511524": "in-town infill plat M25-160: no homes, Charlotte, median lot 0.13 ac -> fallback",
+    "23114109": "large-lot rural plat M21-428: no homes, unincorporated, 3.3 ac lots -> unknown",
+    "13533311": "plat M25-763 inside Mint Hill but 1.4 ac lots -> unknown",
     "00716240": "plat M44-513 (2006) -> served; 317 ft from the Sam Furr Road sewer extension",
     "00102115": "recent plat M74-885 that includes a 1940 house -> unknown",
     "00319105": "plat M25-695 whose first home was built in 1980 exactly -> unknown (cutoff is after 1980)",
@@ -40,16 +44,17 @@ if __name__ == "__main__":
     OUT.mkdir(exist_ok=True)
 
     owners = pd.read_csv(ROOT / cfg["county"]["owners"], dtype=str, encoding="utf-8-sig", keep_default_na=False,
-                         usecols=["pid", "camapid", "txt_legaldesc"])
+                         usecols=["pid", "camapid", "txt_legaldesc", "municipality_desc"])
     owners["ref"] = owners["txt_legaldesc"].str.extract(r"M(\d+-\d+)", expand=False)
     refs = set(owners.loc[owners["pid"].isin(PINS), "ref"].dropna())
     keep = owners[owners["pid"].isin(PINS) | owners["ref"].isin(refs)].drop(columns="ref")
     keep.to_csv(OUT / "owners.csv", index=False)
     pins = sorted(set(keep["pid"]))
 
-    where = "pid IN ({})".format(",".join(f"'{p}'" for p in PINS))
+    # Every parcel on the same plats too: the plat's median lot size is measured from shapes
+    where = "pid IN ({})".format(",".join(f"'{p}'" for p in pins))
     parcels = pyogrio.read_dataframe(ROOT / cfg["county"]["boundaries"], columns=["pid"], where=where)
-    assert len(parcels) == len(PINS), set(PINS) - set(parcels["pid"])
+    assert set(PINS) <= set(parcels["pid"]), set(PINS) - set(parcels["pid"])
     pyogrio.write_dataframe(parcels, OUT / "parcels.gpkg", layer="parcels")
 
     with get_engine().connect() as conn:

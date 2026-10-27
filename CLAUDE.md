@@ -38,6 +38,10 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   assessor acres differ by >20% score on the smaller figure and are marked "verify
   acreage". Parcels the larger figure would push into the top picks go on a weekly
   "check acreage" list. Record each manual check as a correction.
+- Unknown sewer (decided 2026-10-27, for scoring): inside a municipal limit, assume served and
+  add a "verify sewer" flag; outside, score without public sewer and also report an
+  "if sewer available" value. Low-confidence "served" is a risk, not a fact.
+- Water status uses the sewer proxies for now; split it when water-specific data exists.
 
 ## Lessons learned
 (append corrections here as we go)
@@ -61,6 +65,16 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   inside scoring, never on deal sheets, maps, or anything shared.
 - Charlotte Water capital projects are in the city CIP "View of Polygons" layer (MapServer/23),
   not the lines layer, which holds only street and bike projects.
+- TODO (Phase 3): sewer source 2, Charlotte Water comments in rezoning staff analyses, is
+  deferred to share the minutes watcher's scraper and extractor. Findings from 2026-10-27:
+  the city's Legistar API (webapi.legistar.com/v1/charlottenc) lists "Zoning Hearing"
+  matters (~500 in 3 years) whose attachments include a pre-hearing staff analysis ("PHSA");
+  its "Charlotte Water:" bullet gives main type, size and location. The PDFs list no parcel
+  IDs, so match petitions to parcels with the city's PLN/Rezonings and PLN/RezoningHistory
+  polygon layers. The city web pages build links with JavaScript; use the API, not the site.
+- Sewer proxies: plat_first_home (first home on the plat built after 1980) and
+  plat_age_fallback (no homes yet, plat book 20-89, inside a town limit, median lot < 0.5 ac).
+  Plat book numbers run in date order up to ~80; 90+ is an older series.
 - Charlotte's zoning layer lags rezonings by ~4 months (last rezoning June 2026 in the Oct
   download); the county's "Parcels with zoning" list is newer.
 - This PC has 7 GB RAM and a small, nearly full C: drive. Load big files in chunks, and

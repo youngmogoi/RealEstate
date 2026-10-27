@@ -43,6 +43,17 @@ utilities:
   # Source 4 proxy: a parcel on a recorded plat whose first home was built after this year
   # counts as served (low confidence), for sewer and water.
   plat_after_year: 1980
+  # Fallback for plats with no home in the year-built data yet (new subdivisions): served (low)
+  # only if the plat book is recent, the parcel is inside a municipal limit, and the plat's
+  # median lot is small. Books 20+ were >89% first built after 1980 (checked 2026-10-27);
+  # books 90+ are an older numbering series. The newest book in Oct 2026 was 78, about 2-3 a
+  # year: raise book_max before it reaches 89 (around 2029).
+  plat_fallback:
+    book_min: 20
+    book_max: 89
+    max_median_lot_acres: 0.5
+    # County tax municipality values meaning "outside every town limit"
+    outside_municipality: ["MECKLENBURG COUNTY-UNINCORPORATED", "na"]
 
 # NC OneMap statewide parcels. Kept as history only; months behind the county for Mecklenburg.
 nconemap:
