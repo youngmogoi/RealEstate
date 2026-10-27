@@ -55,6 +55,12 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   validity code until the assessor reviews them.
 - Biggest GIS-vs-assessor acreage gaps are submerged land, government and mining tracts;
   check these before trusting either figure.
+- 2026-10-27: Charlotte Water does not publish sewer/water line GIS (checked county portal, city
+  map server). Sewer status is estimated (ingest/utilities.py) and carries a confidence.
+  Any Charlotte Water file in data/raw/utilities/ is under a security agreement: use it only
+  inside scoring, never on deal sheets, maps, or anything shared.
+- Charlotte Water capital projects are in the city CIP "View of Polygons" layer (MapServer/23),
+  not the lines layer, which holds only street and bike projects.
 - Charlotte's zoning layer lags rezonings by ~4 months (last rezoning June 2026 in the Oct
   download); the county's "Parcels with zoning" list is newer.
 - This PC has 7 GB RAM and a small, nearly full C: drive. Load big files in chunks, and

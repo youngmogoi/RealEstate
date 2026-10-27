@@ -25,6 +25,25 @@ zoning:
   # Smaller pieces are usually map misalignment along district edges.
   split_min_share: 0.05
 
+# Sewer and water status (Mecklenburg). Charlotte Water does not publish its lines, so status is
+# estimated from the sources below; see ingest/utilities.py.
+utilities:
+  # Source 1: Charlotte Water files under their security agreement. Never read without asking;
+  # the ingest stops if anything is found here.
+  restricted_dir: data/raw/utilities
+  # Source 3: city capital projects, polygon view (has name, type, phase, years)
+  cip_url: https://gis.charlottenc.gov/arcgis/rest/services/CIP/CapitalImprovementProjectsService/MapServer/23
+  cip_download_dir: data/raw/cip
+  cip_types: [Sewer, Water]
+  cip_planned_phases: [Planning, Design, Design-Build, Procurement Services, Construction, Active, On Hold]
+  planned_project_within_ft: 1000
+  # A main within this distance makes a parcel "nearby" rather than "unserved" (used once
+  # distances exist, i.e. sources 1 and 2)
+  nearby_ft: 1000
+  # Source 4 proxy: a parcel on a recorded plat whose first home was built after this year
+  # counts as served (low confidence), for sewer and water.
+  plat_after_year: 1980
+
 # NC OneMap statewide parcels. Kept as history only; months behind the county for Mecklenburg.
 nconemap:
   # The newest match (by Publication_Date in its metadata file) is loaded.
