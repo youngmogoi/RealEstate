@@ -34,6 +34,10 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
 - Sewer distance drives value more than anything; treat it carefully.
 - County GIS acreage and zoning can be wrong; flag outliers, don't trust them.
 - Subdivision net usable land = 65-75% of net acres (config value).
+- Acreage mismatch rule (decided 2026-10-27, config/scoring.yaml): parcels whose GIS and
+  assessor acres differ by >20% score on the smaller figure and are marked "verify
+  acreage". Parcels the larger figure would push into the top picks go on a weekly
+  "check acreage" list. Record each manual check as a correction.
 
 ## Lessons learned
 (append corrections here as we go)

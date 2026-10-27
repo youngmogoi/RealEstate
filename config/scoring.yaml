@@ -1,0 +1,10 @@
+# Scoring rules. Not used yet: scoring/ reads this once it is built.
+
+acreage:
+  # Parcels flagged acres_mismatch (GIS vs assessor acres off by more than
+  # acres_mismatch_threshold in ingest.yaml) are scored on this figure:
+  # smaller | gis | assessor
+  score_on: smaller
+  # Also score flagged parcels on the larger figure; list any it would move into
+  # the top picks as "check acreage" in the weekly digest.
+  upside_review: true
