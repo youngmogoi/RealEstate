@@ -75,7 +75,7 @@ def check(row, **expected):
 
 def test_net_is_never_negative_or_above_gross(result):
     df = result[4]
-    assert len(df) == 5
+    assert len(df) == 6
     assert (df["net_buildable_acres"] >= 0).all() and (df["net_buildable_acres"] <= df["gross_acres"]).all()
     assert np.allclose(df["net_buildable_acres"] + df["unbuildable_acres"], df["gross_acres"])
 
@@ -93,6 +93,18 @@ def test_flags_are_measured_not_deducted(result):
     check(r, fema_floodplain_acres=8.871, community_floodplain_acres=8.912, floodplain_flag_acres=0.694,
           possible_unmapped_wetland_acres=0.519, slope_15_25_acres=0.592)
     assert r.stream_length_ft == pytest.approx(904, abs=1)
+
+
+def test_floodplain_flag_excludes_open_water_and_500_year():
+    assert CFG["layers"]["community_floodplain"]["exclude"] == {"FLD_ZONE": ["0.2 PCT ANNUAL CHANCE FLOOD HAZARD"]}
+    assert CFG["floodplain_open_water"]["values"] == ["Lake", "Freshwater Pond"]
+
+
+def test_lakefront_floodplain_split(result):
+    r = result[4].loc["00101324"]  # 14047 Island Dr, Lake Norman
+    check(r, fema_floodplain_acres=0.558, unbuildable_acres=0.476, floodplain_open_water_acres=0.104,
+          floodplain_flag_acres=0.064)
+    assert r.floodplain_flag_acres + r.floodplain_open_water_acres < r.fema_floodplain_acres
 
 
 def test_buffer_and_steep_slope_overlap_once(result):
@@ -131,5 +143,5 @@ def test_dates_stored_per_layer(result):
 
 def test_rerun_stores_no_changes(result):
     engine, slope, dates, changes, _ = result
-    assert changes["added"] == 5
-    assert assign_parcels(engine, AS_OF, CFG, slope, dates, S) == {"added": 0, "changed": 0, "removed": 0, "current": 5}
+    assert changes["added"] == 6
+    assert assign_parcels(engine, AS_OF, CFG, slope, dates, S) == {"added": 0, "changed": 0, "removed": 0, "current": 6}

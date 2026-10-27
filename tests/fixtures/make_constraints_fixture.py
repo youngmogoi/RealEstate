@@ -30,6 +30,7 @@ PINS = {
     "10102103": "steep slope only; unknown sewer (septic rated)",
     "08920128": "443 Dawn Cir: small city lot, a sliver of 15-25% slope",
     "03141608": "2137 Tom Sadler Rd: no constraints",
+    "00101324": "14047 Island Dr (Lake Norman): floodplain partly over open water, removed from the flag",
 }
 
 if __name__ == "__main__":

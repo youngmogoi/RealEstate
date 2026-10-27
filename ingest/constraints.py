@@ -15,7 +15,8 @@ and their classes live in config/constraints.yaml.
 Unbuildable acres never double count: the vector unbuildable layers are unioned inside the
 parcel, and unbuildable slope pixels are added only where they fall outside that union
 (the vector layers are rasterized onto the slope grid by pixel center for this). Floodplain
-flag acres are the union of the floodplain layers outside the unbuildable area. Gross acres
+flag acres are the union of the 1% floodplain layers outside the unbuildable area and outside
+open water (NWI lakes and ponds, reported as floodplain_open_water_acres). Gross acres
 are the parcel shape's own area, and net = gross - unbuildable, kept between 0 and gross.
 """
 
@@ -251,6 +252,14 @@ flood AS (
     SELECT pin, ST_UnaryUnion(ST_Collect(g), 0.01) AS g FROM {s}.constraint_hits
     WHERE layer = ANY(:floodplain_layers) GROUP BY pin
 ),
+water AS (
+    SELECT pin, ST_UnaryUnion(ST_Collect(g), 0.01) AS g FROM {s}.constraint_hits WHERE class = 'water' GROUP BY pin
+),
+flood_net AS (
+    -- floodplain outside the unbuildable area
+    SELECT f.pin, CASE WHEN u.g IS NULL THEN f.g ELSE ST_Difference(f.g, u.g) END AS g
+    FROM flood f LEFT JOIN unb u USING (pin)
+),
 streams AS (
     SELECT p.pin, sum(ST_Length(ST_Intersection(p.geom, f.geom))) AS ft
     FROM {s}.parcels p JOIN {s}.constraint_features f ON f.layer = 'streams' AND ST_Intersects(p.geom, f.geom)
@@ -273,9 +282,10 @@ gross AS (SELECT pin, ST_Area(geom) / 43560 AS acres FROM {s}.parcels),
 calc AS (
     SELECT g.pin, g.acres AS gross,
            coalesce(ST_Area(unb.g) / 43560, 0) + {slope_unbuildable_extra} AS unbuildable_raw,
-           coalesce(ST_Area(CASE WHEN unb.g IS NULL THEN flood.g ELSE ST_Difference(flood.g, unb.g) END) / 43560, 0)
-               AS flood_raw
-    FROM gross g LEFT JOIN unb USING (pin) LEFT JOIN flood USING (pin) LEFT JOIN {s}.constraint_slope sl USING (pin)
+           coalesce(ST_Area(CASE WHEN w.g IS NULL THEN fn.g ELSE ST_Difference(fn.g, w.g) END) / 43560, 0) AS flood_raw,
+           coalesce(ST_Area(ST_Intersection(fn.g, w.g)) / 43560, 0) AS open_water_raw
+    FROM gross g LEFT JOIN unb USING (pin) LEFT JOIN flood_net fn USING (pin) LEFT JOIN water w USING (pin)
+    LEFT JOIN {s}.constraint_slope sl USING (pin)
 )
 SELECT c.pin, c.gross AS gross_acres,
 {layer_cols},
@@ -283,6 +293,7 @@ SELECT c.pin, c.gross AS gross_acres,
        least(c.unbuildable_raw, c.gross) AS unbuildable_acres,
        greatest(c.gross - c.unbuildable_raw, 0) AS net_buildable_acres,
        least(c.flood_raw, c.gross) AS floodplain_flag_acres,
+       least(c.open_water_raw, c.gross) AS floodplain_open_water_acres,
        coalesce(st.ft, 0) AS stream_length_ft,
        coalesce(u.sewer_status <> 'served', false) AS septic_checked,
 {septic_cols},
@@ -303,6 +314,7 @@ def assign_parcels(engine: Engine, as_of: date, cfg: dict, slope: pd.DataFrame, 
     s = schema
     area_layers = [l for l, spec in cfg["layers"].items() if spec["class"] != "info"]
     floodplain = [l for l, spec in cfg["layers"].items() if spec.get("flag_group") == "floodplain"]
+    ow = cfg["floodplain_open_water"]
     bands = cfg["slope"]["bands"]
     unb_bands = [n for n, b in bands.items() if b["class"] == "unbuildable"]
     layer_pivot = ",\n".join(f"           sum(acres) FILTER (WHERE layer = '{l}') AS {l}" for l in area_layers)
@@ -321,8 +333,11 @@ def assign_parcels(engine: Engine, as_of: date, cfg: dict, slope: pd.DataFrame, 
         conn.execute(text(f"DROP TABLE IF EXISTS {s}.constraint_pieces, {s}.constraint_hits"))
         conn.execute(text(
             f"CREATE UNLOGGED TABLE {s}.constraint_pieces AS SELECT layer, class, ST_Subdivide(geom, 256) AS geom "
-            f"FROM {s}.constraint_features WHERE class IN ('unbuildable', 'flag') AND GeometryType(geom) LIKE '%POLYGON'"
-        ))
+            f"FROM {s}.constraint_features WHERE class IN ('unbuildable', 'flag') AND GeometryType(geom) LIKE '%POLYGON' "
+            # open water, a working layer of class 'water': subtracted from the floodplain flag
+            f"UNION ALL SELECT '_open_water', 'water', ST_Subdivide(geom, 256) FROM {s}.constraint_features "
+            f"WHERE layer = :wl AND attrs::jsonb ->> :wc = ANY(:wv)"
+        ), {"wl": ow["layer"], "wc": ow["column"], "wv": list(ow["values"])})
         conn.execute(text(f"CREATE INDEX ON {s}.constraint_pieces USING gist (geom)"))
         conn.execute(text(f"ANALYZE {s}.constraint_pieces"))
         conn.execute(text(f"""
@@ -402,6 +417,8 @@ def quality_report(engine: Engine, cfg: dict, schema: str = "public") -> dict:
         t = conn.execute(text(
             f"SELECT count(*) AS parcels, sum(gross_acres) AS gross, sum(unbuildable_acres) AS unbuildable, "
             f"sum(net_buildable_acres) AS net, sum(floodplain_flag_acres) AS flood, "
+            f"sum(floodplain_open_water_acres) AS open_water, "
+            f"count(*) FILTER (WHERE floodplain_flag_acres > 0) AS with_flood, "
             f"count(*) FILTER (WHERE unbuildable_acres > 0) AS with_unbuildable, "
             f"count(*) FILTER (WHERE net_buildable_acres < 0 OR net_buildable_acres > gross_acres) AS bad_net, "
             f"min(net_buildable_acres - 0) AS min_net, max(net_buildable_acres - gross_acres) AS max_net_over_gross, "
@@ -420,7 +437,9 @@ def format_report(r: dict, changes: dict) -> str:
         f"  gross acres                      {t['gross']:>12,.0f}",
         f"  unbuildable acres                {t['unbuildable']:>12,.0f}  on {t['with_unbuildable']:,.0f} parcels",
         f"  net buildable acres              {t['net']:>12,.0f}",
-        f"  floodplain flag acres            {t['flood']:>12,.0f}  (outside unbuildable; not deducted)",
+        f"  floodplain flag acres            {t['flood']:>12,.0f}  on {t['with_flood']:,.0f} parcels "
+        f"(1% only, outside unbuildable and open water; not deducted)",
+        f"  floodplain over open water       {t['open_water']:>12,.0f}  (NWI lakes/ponds; removed from the flag)",
         f"  parcels with net < 0 or > gross  {t['bad_net']:>12,.0f}  (min net {t['min_net']:.4f}; "
         f"max net - gross {t['max_net_over_gross']:.6f})",
         f"  parcels checked for septic       {t['septic_checked']:>12,.0f}",

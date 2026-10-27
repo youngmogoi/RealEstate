@@ -42,6 +42,12 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   add a "verify sewer" flag; outside, score without public sewer and also report an
   "if sewer available" value. Low-confidence "served" is a risk, not a fact.
 - Water status uses the sewer proxies for now; split it when water-specific data exists.
+- Phase 2.2 (decided 2026-10-27): single-family minimum lot size and lot width checks use
+  GROSS lot area, because zoning measures the whole lot. Net buildable acres apply only to
+  subdivision and townhome yield.
+- Floodplain flag (decided 2026-10-27): 1% annual chance only (the community layer's 0.2%
+  shapes are dropped), and open water (NWI lakes and ponds) is subtracted, since the FEMA
+  layer has no zone codes and 40% of it lies over lakes.
 
 ## Lessons learned
 (append corrections here as we go)

@@ -32,19 +32,29 @@ layers:
     class: unbuildable
     exclude: {type: ["Piped - No Buffer"]}   # piped streams, labelled as having no buffer
   fema_floodplain:
-    # 100-year (1% annual chance), existing conditions
+    # 100-year (1% annual chance), existing conditions. FLD_ZONE has a single value (no A/AE
+    # codes), and 40% of its area is lakes and ponds; see floodplain_open_water below.
     file: data/raw/constraints/FEMA_Floodplain/FEMA_Floodplain.shp
     class: flag
     flag_group: floodplain    # summed (without overlap, outside unbuildable) into floodplain_flag_acres
   community_floodplain:
-    # future conditions; also 7 shapes of 0.2% (500-year) hazard
+    # future conditions. Its 7 shapes of 0.2% (500-year) hazard (2,044 ac) are dropped: the
+    # floodplain flag is 1% annual chance only (decided 2026-10-27)
     file: data/raw/constraints/Community_Floodplain/Community_Floodplain.shp
     class: flag
     flag_group: floodplain
+    exclude: {FLD_ZONE: ["0.2 PCT ANNUAL CHANCE FLOOD HAZARD"]}
   streams:
     # lines: stream length inside the parcel, for evidence only
     file: data/raw/constraints/Creeks_Streams/Creeks_Streams.shp
     class: info
+
+# Open water removed from floodplain_flag_acres (water isn't buildable-with-cost land) and
+# reported separately as floodplain_open_water_acres. NWI edges are approximate.
+floodplain_open_water:
+  layer: possible_unmapped_wetland
+  column: WETLAND_TY
+  values: ["Lake", "Freshwater Pond"]
 
 slope:
   # USGS 3DEP elevation service (NC statewide LiDAR). The ingest builds a raster of slope bands
