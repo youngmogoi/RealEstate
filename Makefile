@@ -1,4 +1,4 @@
-.PHONY: up down test ingest ingest-nconemap score digest
+.PHONY: up down test ingest ingest-nconemap zoning score digest
 
 .env:
 	cp .env.example .env
@@ -17,6 +17,9 @@ ingest:
 
 ingest-nconemap:
 	uv run python -m ingest.nconemap_parcels
+
+zoning:
+	uv run python -m ingest.zoning
 
 score:
 	@echo "score: not implemented yet" && exit 1

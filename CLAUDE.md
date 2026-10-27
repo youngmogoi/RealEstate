@@ -55,5 +55,7 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   validity code until the assessor reviews them.
 - Biggest GIS-vs-assessor acreage gaps are submerged land, government and mining tracts;
   check these before trusting either figure.
+- Charlotte's zoning layer lags rezonings by ~4 months (last rezoning June 2026 in the Oct
+  download); the county's "Parcels with zoning" list is newer.
 - This PC has 7 GB RAM and a small, nearly full C: drive. Load big files in chunks, and
   don't let Docker's disk fill up: it corrupted Postgres once.

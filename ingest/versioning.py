@@ -24,6 +24,20 @@ def row_hash(df: pd.DataFrame) -> pd.Series:
     return pd.Series(hashes.view("int64"), index=df.index)
 
 
+def create_staging_from_query(conn: Connection, staging: str, select_sql: str, params: dict | None = None) -> None:
+    """Create `staging` from a SELECT, adding row_hash in the same statement.
+
+    The hash must not be added with a later UPDATE: an index built in the same transaction
+    after an UPDATE can't be used by that transaction, and apply_versioned then scans the
+    whole staging table once per row.
+    """
+    conn.execute(text(f"DROP TABLE IF EXISTS {staging}"))
+    conn.execute(text(
+        f"CREATE UNLOGGED TABLE {staging} AS SELECT t.*, "
+        f"('x' || substr(md5(t::text), 1, 16))::bit(64)::bigint AS row_hash FROM ({select_sql}) t"
+    ), params or {})
+
+
 def apply_versioned(conn: Connection, table: str, key: list[str], as_of: date) -> dict:
     """Merge `<table>_staging` (which must have a `row_hash` column) into `<table>`.
 

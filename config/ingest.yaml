@@ -13,6 +13,18 @@ county:
   owners: data/raw/OwnerInfo_Table/OwnerInfo_Table.csv         # "Tax Parcel Ownership Data"
   sales: data/raw/Parcel_Sales_Table/Parcel_Sales_Table.csv    # "Tax Parcel Sales"
 
+# Zoning (Mecklenburg County Open Mapping). Charlotte's layer covers the city and its planning
+# area; the towns layer covers the six towns (plus a sliver of Stallings).
+zoning:
+  charlotte: data/raw/zoning/Zoning/Zoning.shp                  # "City of Charlotte Zoning"
+  towns: data/raw/zoning/Tax/Tax.gpkg                           # "Unincorporated County & Towns Zoning"
+  towns_layer: Zoning_County_Towns
+  # County's own parcel-to-zoning list, used only to cross-check ("Parcels with zoning and zipcode")
+  county_check: data/raw/zoning/ParcelZoningZipcode_Table/ParcelZoningZipcode_Table.csv
+  # A parcel counts as split when a second district covers at least this share of it.
+  # Smaller pieces are usually map misalignment along district edges.
+  split_min_share: 0.05
+
 # NC OneMap statewide parcels. Kept as history only; months behind the county for Mecklenburg.
 nconemap:
   # The newest match (by Publication_Date in its metadata file) is loaded.
