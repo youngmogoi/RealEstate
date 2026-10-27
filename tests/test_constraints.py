@@ -102,9 +102,16 @@ def test_floodplain_flag_excludes_open_water_and_500_year():
 
 def test_lakefront_floodplain_split(result):
     r = result[4].loc["00101324"]  # 14047 Island Dr, Lake Norman
-    check(r, fema_floodplain_acres=0.558, unbuildable_acres=0.476, floodplain_open_water_acres=0.104,
-          floodplain_flag_acres=0.064)
-    assert r.floodplain_flag_acres + r.floodplain_open_water_acres < r.fema_floodplain_acres
+    # 0.476 ac is the whole unbuildable buffer; only 0.389 ac of it is floodplain
+    check(r, floodplain_total_acres=0.558, floodplain_unbuildable_acres=0.389, floodplain_open_water_acres=0.104,
+          floodplain_flag_acres=0.064, unbuildable_acres=0.476)
+
+
+def test_floodplain_parts_add_up_for_every_parcel(result):
+    df = result[4]
+    parts = df["floodplain_unbuildable_acres"] + df["floodplain_open_water_acres"] + df["floodplain_flag_acres"]
+    assert np.allclose(parts, df["floodplain_total_acres"], atol=0.001)
+    assert (df["floodplain_total_acres"] >= df[["fema_floodplain_acres", "community_floodplain_acres"]].max(axis=1) - 0.001).all()
 
 
 def test_buffer_and_steep_slope_overlap_once(result):

@@ -51,6 +51,7 @@ CRS_EPSG = 2264
 FT_PER_M = 3.280839895
 TILE_PX = 2000  # the 3DEP service errors on larger F32 exports
 NODATA = 255
+FLOOD_PARTS_TOL = 0.001  # acres; floodplain parts must sum to the floodplain total within this
 SEPTIC_CLASSES = {"Not limited": "not_limited", "Somewhat limited": "somewhat_limited", "Very limited": "very_limited"}
 
 
@@ -283,8 +284,11 @@ calc AS (
     SELECT g.pin, g.acres AS gross,
            coalesce(ST_Area(unb.g) / 43560, 0) + {slope_unbuildable_extra} AS unbuildable_raw,
            coalesce(ST_Area(CASE WHEN w.g IS NULL THEN fn.g ELSE ST_Difference(fn.g, w.g) END) / 43560, 0) AS flood_raw,
-           coalesce(ST_Area(ST_Intersection(fn.g, w.g)) / 43560, 0) AS open_water_raw
-    FROM gross g LEFT JOIN unb USING (pin) LEFT JOIN flood_net fn USING (pin) LEFT JOIN water w USING (pin)
+           coalesce(ST_Area(ST_Intersection(fn.g, w.g)) / 43560, 0) AS open_water_raw,
+           coalesce(ST_Area(flood.g) / 43560, 0) AS flood_total_raw,
+           coalesce(ST_Area(ST_Intersection(flood.g, unb.g)) / 43560, 0) AS flood_unbuildable_raw
+    FROM gross g LEFT JOIN unb USING (pin) LEFT JOIN flood USING (pin) LEFT JOIN flood_net fn USING (pin)
+    LEFT JOIN water w USING (pin)
     LEFT JOIN {s}.constraint_slope sl USING (pin)
 )
 SELECT c.pin, c.gross AS gross_acres,
@@ -292,8 +296,11 @@ SELECT c.pin, c.gross AS gross_acres,
 {slope_cols},
        least(c.unbuildable_raw, c.gross) AS unbuildable_acres,
        greatest(c.gross - c.unbuildable_raw, 0) AS net_buildable_acres,
-       least(c.flood_raw, c.gross) AS floodplain_flag_acres,
+       -- floodplain_total = floodplain_unbuildable + floodplain_open_water + floodplain_flag
+       least(c.flood_total_raw, c.gross) AS floodplain_total_acres,
+       least(c.flood_unbuildable_raw, c.gross) AS floodplain_unbuildable_acres,
        least(c.open_water_raw, c.gross) AS floodplain_open_water_acres,
+       least(c.flood_raw, c.gross) AS floodplain_flag_acres,
        coalesce(st.ft, 0) AS stream_length_ft,
        coalesce(u.sewer_status <> 'served', false) AS septic_checked,
 {septic_cols},
@@ -418,6 +425,8 @@ def quality_report(engine: Engine, cfg: dict, schema: str = "public") -> dict:
             f"SELECT count(*) AS parcels, sum(gross_acres) AS gross, sum(unbuildable_acres) AS unbuildable, "
             f"sum(net_buildable_acres) AS net, sum(floodplain_flag_acres) AS flood, "
             f"sum(floodplain_open_water_acres) AS open_water, "
+            f"count(*) FILTER (WHERE abs(floodplain_total_acres - floodplain_unbuildable_acres "
+            f"- floodplain_open_water_acres - floodplain_flag_acres) > {FLOOD_PARTS_TOL}) AS flood_parts_mismatch, "
             f"count(*) FILTER (WHERE floodplain_flag_acres > 0) AS with_flood, "
             f"count(*) FILTER (WHERE unbuildable_acres > 0) AS with_unbuildable, "
             f"count(*) FILTER (WHERE net_buildable_acres < 0 OR net_buildable_acres > gross_acres) AS bad_net, "
@@ -440,6 +449,7 @@ def format_report(r: dict, changes: dict) -> str:
         f"  floodplain flag acres            {t['flood']:>12,.0f}  on {t['with_flood']:,.0f} parcels "
         f"(1% only, outside unbuildable and open water; not deducted)",
         f"  floodplain over open water       {t['open_water']:>12,.0f}  (NWI lakes/ponds; removed from the flag)",
+        f"  floodplain parts not adding up   {t['flood_parts_mismatch']:>12,.0f}  (total = unbuildable + water + flag)",
         f"  parcels with net < 0 or > gross  {t['bad_net']:>12,.0f}  (min net {t['min_net']:.4f}; "
         f"max net - gross {t['max_net_over_gross']:.6f})",
         f"  parcels checked for septic       {t['septic_checked']:>12,.0f}",
@@ -488,6 +498,9 @@ def main() -> None:
         )
     print()
     print(format_report(report, changes))
+    bad = int(report["totals"]["bad_net"] + report["totals"]["flood_parts_mismatch"])
+    if bad:
+        raise SystemExit(f"{bad} parcels fail the net-acre or floodplain-parts checks; see the report above")
 
 
 if __name__ == "__main__":
