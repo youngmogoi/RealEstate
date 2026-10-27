@@ -77,5 +77,11 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   Plat book numbers run in date order up to ~80; 90+ is an older series.
 - Charlotte's zoning layer lags rezonings by ~4 months (last rezoning June 2026 in the Oct
   download); the county's "Parcels with zoning" list is newer.
+- 2026-10-27: the county's map server (meckags.mecklenburgcountync.gov) now answers 403 to
+  scripts. Download county layers by hand from Open Mapping into data/raw/; don't work around it.
+- The county portal's "Wetlands" layer is the National Wetlands Inventory (USFWS), not
+  county-delineated wetlands, so it is a flag only (possible_unmapped_wetland_acres).
+- USGS 3DEP elevation (exportImage) returns meters and errors on tiles above ~2,000 px;
+  the slope band raster is cached in data/raw/constraints/derived/.
 - This PC has 7 GB RAM and a small, nearly full C: drive. Load big files in chunks, and
   don't let Docker's disk fill up: it corrupted Postgres once.

@@ -1,4 +1,4 @@
-.PHONY: up down test ingest ingest-nconemap zoning utilities score digest
+.PHONY: up down test ingest ingest-nconemap zoning utilities constraints score digest
 
 .env:
 	cp .env.example .env
@@ -20,6 +20,9 @@ ingest-nconemap:
 
 utilities:
 	uv run python -m ingest.utilities
+
+constraints:
+	uv run python -m ingest.constraints
 
 zoning:
 	uv run python -m ingest.zoning

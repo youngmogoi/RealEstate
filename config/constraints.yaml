@@ -1,0 +1,72 @@
+# Site constraints (ingest/constraints.py). DRAFT 2026-10-27: awaiting your confirmation.
+#
+# class:
+#   unbuildable   - deducted from gross acres to get net buildable acres
+#   flag          - measured and reported (e.g. floodplain = cost/risk), not deducted
+#   info          - measured for evidence only
+# Overlaps are never double counted: unbuildable acres are the area of the union of all
+# unbuildable layers inside the parcel; flag acres are the floodplain area outside it.
+#
+# Files are Mecklenburg Open Mapping downloads (2026-10-27). `where` keeps only matching rows;
+# `exclude` drops rows whose column has one of the listed values.
+
+layers:
+  community_encroachment:
+    file: data/raw/constraints/Community_Floodway/Community_Floodway.shp   # FLD_ZONE "COMMUNITY ENCROACHMENT AREA"
+    class: unbuildable
+  fema_floodway:
+    file: data/raw/constraints/FEMA_Floodway/FEMA_Floodway.shp
+    class: unbuildable
+  possible_unmapped_wetland:
+    # National Wetlands Inventory (USFWS) for 16 NC/SC counties, from the county portal. It is
+    # coarse aerial-photo mapping, so it is a flag only (decided 2026-10-27). There is no
+    # separate county-delineated wetlands layer yet.
+    file: data/raw/constraints/Wetlands/Wetlands.shp
+    class: flag
+    where: {name: Mecklenburg}
+  water_quality_buffers:
+    # SWIM, Post Construction, WSW (water supply watershed), Wildlife. No zones in the data:
+    # each buffer is one shape of its full width.
+    file: data/raw/constraints/SurfaceWaterProtection/SurfaceWaterProtection.gpkg
+    layer: WaterQuality_Buffers
+    class: unbuildable
+    exclude: {type: ["Piped - No Buffer"]}   # piped streams, labelled as having no buffer
+  fema_floodplain:
+    # 100-year (1% annual chance), existing conditions
+    file: data/raw/constraints/FEMA_Floodplain/FEMA_Floodplain.shp
+    class: flag
+    flag_group: floodplain    # summed (without overlap, outside unbuildable) into floodplain_flag_acres
+  community_floodplain:
+    # future conditions; also 7 shapes of 0.2% (500-year) hazard
+    file: data/raw/constraints/Community_Floodplain/Community_Floodplain.shp
+    class: flag
+    flag_group: floodplain
+  streams:
+    # lines: stream length inside the parcel, for evidence only
+    file: data/raw/constraints/Creeks_Streams/Creeks_Streams.shp
+    class: info
+
+slope:
+  # USGS 3DEP elevation service (NC statewide LiDAR). The ingest builds a raster of slope bands
+  # at this resolution, saves it to derived_dir, and reuses it until that file is deleted.
+  # Per-parcel acres are coverage-weighted pixel counts (exactextract); no minimum patch size.
+  source: https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer
+  resolution_ft: 10
+  # A pixel is in a band when min_pct < slope <= max_pct (no max_pct = no upper limit).
+  bands:
+    slope_15_25:
+      min_pct: 15
+      max_pct: 25
+      class: flag           # buildable with cost: stored and flagged, not deducted
+    slope_over_25:
+      min_pct: 25
+      class: unbuildable    # deducted by default; set to flag to report without deducting
+
+septic_soils:
+  # USDA Soil Data Access, "ENG - Septic Tank Absorption Fields" rating of each map unit's
+  # dominant component. Measured only for parcels whose sewer_status is not "served"; not deducted.
+  source: https://sdmdataaccess.sc.egov.usda.gov/Tabular/post.rest
+  survey_area: NC119
+  rule: ENG - Septic Tank Absorption Fields
+
+derived_dir: data/raw/constraints/derived

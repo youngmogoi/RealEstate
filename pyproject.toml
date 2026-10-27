@@ -13,6 +13,7 @@ dependencies = [
     "pyyaml",
     "geoalchemy2>=0.20.0",
     "pyarrow>=26.0.0",
+    "exactextract>=0.3.0",
 ]
 
 [dependency-groups]

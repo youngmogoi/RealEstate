@@ -56,6 +56,23 @@ wheels = [
 ]
 
 [[package]]
+name = "exactextract"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8c/54/9e9c077b832b7af3f97c86f19285382b8abea8c7c5d4333076d8d35782ac/exactextract-0.3.0.tar.gz", hash = "sha256:5864eab819474967e30c6a0118af3658da08d0b5ec1c2b8f747fb009b6b7856c", size = 185346, upload-time = "2025-12-01T15:53:19.094Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e5/ba/02e215f350c06e6e3d3fca04f9f4b36cf4d979b429cac5c79093ae2f6543/exactextract-0.3.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:232c1973200579548f5de20460198139d9902538b451db1a955af16eb3026f95", size = 1492994, upload-time = "2025-12-01T15:52:32.473Z" },
+    { url = "https://files.pythonhosted.org/packages/19/72/9d0e7ace6d033f88c6dc5ecbe0eb26d31dd08dd59818f4c9403ac5c0104e/exactextract-0.3.0-cp312-cp312-macosx_11_0_x86_64.whl", hash = "sha256:562d6719b76e40d5707455edb91b8ffbebcc55f0bbefe577a6567a063338f597", size = 1708236, upload-time = "2025-12-01T15:52:33.875Z" },
+    { url = "https://files.pythonhosted.org/packages/82/8d/6a224e6b146c0c87c02983b2f75bddf922f04a22f87e718c2a56bb583d86/exactextract-0.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:7edb8c3654fabe25a5bebde0769e80a0bdba604e93e3a7ba9ea8054ff0571cef", size = 2276626, upload-time = "2025-12-01T15:52:36.081Z" },
+    { url = "https://files.pythonhosted.org/packages/51/0a/81ed8e8ccdf9ae8d53a9deb1d9af0dda78d02b975fe9d1351c36ec1d5ff1/exactextract-0.3.0-cp312-cp312-win32.whl", hash = "sha256:1ae80f2ee980a1fcd48e68fb4c9875d63047fd11508b79e00b6c4c435ef4e4ad", size = 1528873, upload-time = "2025-12-01T15:52:37.491Z" },
+    { url = "https://files.pythonhosted.org/packages/39/09/4e6e41330346cb01a8908b987132a1d6d03f65b86507ec47c062e2026541/exactextract-0.3.0-cp312-cp312-win_amd64.whl", hash = "sha256:1fd94b08e70ee8ad546387c19f1ecdcaaea9250487ede47bc64b739bc9c6dcd0", size = 1684156, upload-time = "2025-12-01T15:52:39.023Z" },
+    { url = "https://files.pythonhosted.org/packages/d5/23/3ce65a183a641f1956cb71475e7c1c1be8ba2ddd366403ec827761304421/exactextract-0.3.0-cp312-cp312-win_arm64.whl", hash = "sha256:1a0cb8de2d1efb723774025dd931a57bb62faff1e1f0a1fea96ab54c756e26a5", size = 1770584, upload-time = "2025-12-01T15:52:40.717Z" },
+]
+
+[[package]]
 name = "geoalchemy2"
 version = "0.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -99,6 +116,7 @@ name = "nc-land-intelligence"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "exactextract" },
     { name = "geoalchemy2" },
     { name = "geopandas" },
     { name = "psycopg", extra = ["binary"] },
@@ -117,6 +135,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "exactextract", specifier = ">=0.3.0" },
     { name = "geoalchemy2", specifier = ">=0.20.0" },
     { name = "geopandas" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3" },
