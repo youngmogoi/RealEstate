@@ -1,0 +1,69 @@
+"""Current tables with full history, storing only what changed.
+
+`<table>` holds the current version of each key, with `valid_from`: the as-of date of the
+load where the row first appeared in this exact form. When a later load changes or drops a
+key, the old row moves to `<table>_history` with `valid_to` set to that load's as-of date.
+History rows are never edited.
+
+The table as it stood on date D:
+
+    SELECT * FROM t WHERE valid_from <= D
+    UNION ALL
+    SELECT <same columns> FROM t_history WHERE valid_from <= D AND valid_to > D
+"""
+
+from datetime import date
+
+import pandas as pd
+from sqlalchemy import Connection, text
+
+
+def row_hash(df: pd.DataFrame) -> pd.Series:
+    """64-bit hash of every column, for spotting changed rows. Pass geometry as WKB hex."""
+    hashes = pd.util.hash_pandas_object(df, index=False, categorize=False).to_numpy(dtype="uint64")
+    return pd.Series(hashes.view("int64"), index=df.index)
+
+
+def apply_versioned(conn: Connection, table: str, key: list[str], as_of: date) -> dict:
+    """Merge `<table>_staging` (which must have a `row_hash` column) into `<table>`.
+
+    Unchanged rows stay put. Changed and removed rows move to history. Returns counts.
+    """
+    staging, history = f"{table}_staging", f"{table}_history"
+    keycols = ", ".join(key)
+    match = " AND ".join(f"c.{k} = s.{k}" for k in key)
+
+    dupes = conn.execute(text(
+        f"SELECT count(*) FROM (SELECT 1 FROM {staging} GROUP BY {keycols} HAVING count(*) > 1) d"
+    )).scalar_one()
+    if dupes:
+        raise ValueError(f"{staging} has {dupes} duplicate keys on ({keycols})")
+    conn.execute(text(f"CREATE INDEX ON {staging} ({keycols})"))
+    conn.execute(text(f"ANALYZE {staging}"))
+
+    if not conn.execute(text("SELECT to_regclass(:t) IS NOT NULL"), {"t": table}).scalar_one():
+        conn.execute(text(f"CREATE TABLE {table} (LIKE {staging})"))
+        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN valid_from date NOT NULL"))
+        conn.execute(text(f"CREATE TABLE {history} (LIKE {table})"))
+        conn.execute(text(f"ALTER TABLE {history} ADD COLUMN valid_to date NOT NULL"))
+        conn.execute(text(f"CREATE UNIQUE INDEX ON {table} ({keycols})"))
+        conn.execute(text(f"CREATE INDEX ON {history} ({keycols}, valid_from)"))
+
+    in_staging = f"EXISTS (SELECT 1 FROM {staging} s WHERE {match})"
+    unchanged = f"EXISTS (SELECT 1 FROM {staging} s WHERE {match} AND s.row_hash = c.row_hash)"
+    removed, changed = conn.execute(text(
+        f"SELECT count(*) FILTER (WHERE NOT {in_staging}), "
+        f"count(*) FILTER (WHERE {in_staging} AND NOT {unchanged}) FROM {table} c"
+    )).one()
+
+    params = {"d": as_of}
+    conn.execute(text(f"INSERT INTO {history} SELECT c.*, :d FROM {table} c WHERE NOT {unchanged}"), params)
+    conn.execute(text(f"DELETE FROM {table} c WHERE NOT {unchanged}"))
+    inserted = conn.execute(text(
+        f"INSERT INTO {table} SELECT s.*, :d FROM {staging} s "
+        f"WHERE NOT EXISTS (SELECT 1 FROM {table} c WHERE {match})"
+    ), params).rowcount
+    conn.execute(text(f"DROP TABLE {staging}"))
+
+    current = conn.execute(text(f"SELECT count(*) FROM {table}")).scalar_one()
+    return {"added": inserted - changed, "changed": changed, "removed": removed, "current": current}

@@ -1,0 +1,19 @@
+# Rules shared by every parcel ingest.
+
+# Sale dates the county uses to mean "unknown"; stored as null.
+placeholder_sale_dates: ["1900-01-01", "1975-01-01"]
+
+# Flag parcels whose GIS acres and assessor/deeded acres differ by more than this fraction.
+acres_mismatch_threshold: 0.20
+
+# Mecklenburg County Open Mapping downloads (gis.mecknc.gov/data-center). Primary source.
+# Re-download all three into the same folders before each weekly run.
+county:
+  boundaries: data/raw/ParcelBoundary/ParcelBoundary.gpkg      # "Tax Parcel Boundaries"
+  owners: data/raw/OwnerInfo_Table/OwnerInfo_Table.csv         # "Tax Parcel Ownership Data"
+  sales: data/raw/Parcel_Sales_Table/Parcel_Sales_Table.csv    # "Tax Parcel Sales"
+
+# NC OneMap statewide parcels. Kept as history only; months behind the county for Mecklenburg.
+nconemap:
+  # The newest match (by Publication_Date in its metadata file) is loaded.
+  source_glob: data/raw/mecklenburg-parcels-*/nc_mecklenburg_parcels_poly.shp

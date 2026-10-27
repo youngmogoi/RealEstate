@@ -37,3 +37,19 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
 
 ## Lessons learned
 (append corrections here as we go)
+- 2026-10-26: NC OneMap's Mecklenburg parcels lag the county by months (the Jan 2026 file
+  was still current in Oct). Use the county's own Open Mapping downloads
+  (gis.mecknc.gov/data-center): Tax Parcel Boundaries, Ownership Data, Sales. NC OneMap is
+  kept only as the 2026-01-07 snapshot in `nconemap_parcels_snapshots`.
+- NC OneMap left site address blank on many new builds and wrote CIR as CR. The county file
+  has addresses for 99%+ of parcels.
+- County `num_totalac` is in the unit named by `txt_landunittype`: acres for ACRE, square
+  feet for SQUARE FEET, a lot count (1) for LOT. Only ACRE and SQUARE FEET give acres.
+- Condos are one parcel shape with many owner accounts sharing its PIN. Score land on
+  `parcels` (one row per shape), never on `parcel_owners`.
+- The county sales file repeats ~73k rows exactly; drop them. Recent sales have a blank
+  validity code until the assessor reviews them.
+- Biggest GIS-vs-assessor acreage gaps are submerged land, government and mining tracts;
+  check these before trusting either figure.
+- This PC has 7 GB RAM and a small, nearly full C: drive. Load big files in chunks, and
+  don't let Docker's disk fill up: it corrupted Postgres once.

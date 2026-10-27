@@ -11,6 +11,8 @@ dependencies = [
     "psycopg[binary]>=3",
     "python-dotenv",
     "pyyaml",
+    "geoalchemy2>=0.20.0",
+    "pyarrow>=26.0.0",
 ]
 
 [dependency-groups]

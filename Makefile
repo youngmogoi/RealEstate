@@ -1,4 +1,4 @@
-.PHONY: up down test ingest score digest
+.PHONY: up down test ingest ingest-nconemap score digest
 
 .env:
 	cp .env.example .env
@@ -13,7 +13,10 @@ test:
 	uv run pytest -v
 
 ingest:
-	@echo "ingest: not implemented yet" && exit 1
+	uv run python -m ingest.county_parcels
+
+ingest-nconemap:
+	uv run python -m ingest.nconemap_parcels
 
 score:
 	@echo "score: not implemented yet" && exit 1
