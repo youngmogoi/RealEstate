@@ -50,7 +50,9 @@ def test_check_rule():
     no_triplex = {k: v for k, v in TYPES.items() if k != "triplex"}
     assert check_rule({**BY_RIGHT, "types": no_triplex}) == ["types.triplex missing"]
     assert check_rule({**BY_RIGHT, "types": {**TYPES, "duplex": {"allowed": "conditional", **SRC}}}) == [
-        "types.duplex has no units_per_building"]
+        "types.duplex has no units_per_building or max_building_length_ft"]
+    by_length = {"allowed": "conditional", "units_per_building": None, "requires": {"max_building_length_ft": 150}, **SRC}
+    assert check_rule({**BY_RIGHT, "types": {**TYPES, "townhome": by_length}}) == []
     assert check_rule({**BY_RIGHT, "types": {**TYPES, "townhome": {"allowed": "maybe", **SRC}}}) == [
         "types.townhome.allowed must be one of ['conditional', 'no', 'yes']"]
     assert check_rule({**BY_RIGHT, "setbacks_ft": {"front": "NEEDS_REVIEW", **SRC}}) == [

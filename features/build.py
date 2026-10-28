@@ -11,9 +11,12 @@ Where each column comes from:
 - parcel_constraints: gross_acres (the parcel shape's area), unbuildable_acres,
   net_buildable_acres, floodplain_flag_acres, slope_15_25_acres, slope_over_25_acres,
   possible_unmapped_wetland_acres.
-- parcel_zoning: zone_code, zoning_jurisdiction, split_zoning, zone_share; etj_jurisdiction
+- parcel_zoning: zone_code, zoning_jurisdiction, split_zoning, zone_share, zone_petition (the
+  main district's rezoning petition, Charlotte only); etj_jurisdiction
   is the zoning jurisdiction of a parcel whose tax municipality is unincorporated (no ETJ
   layer is published; this is how it is inferred).
+- parcel_place_types (Charlotte Future 2040 Policy Map): place_type, place_type_split,
+  place_type_code_mismatch. NULL outside Charlotte's planning jurisdiction.
 - parcel_utilities: sewer_status, sewer_confidence, sewer_source, sewer_distance_ft,
   water_status, water_distance_ft, planned_project_nearby.
 - streets (city CountyData/Streets): frontage_ft, private_frontage_ft, proposed_frontage_ft,
@@ -168,6 +171,7 @@ base AS (
            CASE WHEN p.municipality = ANY(:outside) THEN z.jurisdiction END AS etj_jurisdiction,
            p.parcel_use AS land_use, c.gross_acres, p.gis_acres,
            z.zone_code, z.jurisdiction AS zoning_jurisdiction, z.split AS split_zoning, z.zone_share,
+           z.petition AS zone_petition, pt.place_type, pt.place_type_split, pt.place_type_code_mismatch,
            u.sewer_status, u.sewer_confidence, u.sewer_source, u.sewer_distance_ft,
            u.water_status, u.water_distance_ft, u.planned_project_nearby,
            c.unbuildable_acres, c.net_buildable_acres, c.floodplain_flag_acres,
@@ -184,6 +188,7 @@ base AS (
     FROM {s}.parcels p
     LEFT JOIN {s}.parcel_constraints c USING (pin)
     LEFT JOIN {s}.parcel_zoning z USING (pin)
+    LEFT JOIN {s}.parcel_place_types pt USING (pin)
     LEFT JOIN {s}.parcel_utilities u USING (pin)
     LEFT JOIN frontage f USING (pin)
     LEFT JOIN dims d USING (pin)
@@ -191,7 +196,8 @@ base AS (
     LEFT JOIN owner_counts oc ON oc.owner_name = p.owner_name
 )
 SELECT pin, site_address, municipality, in_municipal_limit, etj_jurisdiction, land_use, gross_acres, gis_acres,
-       zone_code, zoning_jurisdiction, split_zoning, zone_share,
+       zone_code, zoning_jurisdiction, split_zoning, zone_share, zone_petition,
+       place_type, place_type_split, place_type_code_mismatch,
        sewer_status, sewer_confidence, sewer_source, sewer_distance_ft, water_status, water_distance_ft,
        planned_project_nearby,
        unbuildable_acres, net_buildable_acres, floodplain_flag_acres, slope_15_25_acres, slope_over_25_acres,
@@ -321,7 +327,7 @@ def main() -> None:
         conn.execute(
             text("INSERT INTO ingest_runs (source, snapshot_date, source_file, snapshot_written, report) "
                  "VALUES ('parcel_features', :d, :f, :w, CAST(:r AS jsonb))"),
-            {"d": as_of, "f": "parcels, parcel_constraints, parcel_zoning, parcel_utilities, streets, "
+            {"d": as_of, "f": "parcels, parcel_constraints, parcel_zoning, parcel_place_types, parcel_utilities, streets, "
                               "nconemap_parcels_snapshots, parcel_owners",
              "w": bool(changes["added"] or changes["changed"] or changes["removed"]),
              "r": json.dumps({**report, "changes": changes}, default=str)})

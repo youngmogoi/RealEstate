@@ -65,6 +65,26 @@ nconemap:
 # data/raw/udo/manifest.csv, and extracts sections and tables. `amended` is a regex whose
 # first group is the latest amendment date printed in the document; `heading` matches a
 # numbered section heading line (group 1 = number, group 2 = title).
+policy_map:
+  # Charlotte Future 2040 Policy Map (place types), from the city's ArcGIS Online layer behind
+  # its official viewer (charlotte.maps.arcgis.com, web app 4dc02a1a85974085af7b36c33474efe0).
+  url: https://services.arcgis.com/9Nl857LBlQVyzq54/arcgis/rest/services/Charlotte_Future_2040_Policy_Map/FeatureServer/0
+  download_dir: data/raw/policy_map
+  page_size: 2000                # the layer's maxRecordCount
+  split_min_share: 0.05          # a second place type on >= 5% of a parcel marks it split (as zoning)
+  # Expected short code for each full name; a shape whose code differs is flagged (the name is used)
+  codes:
+    Neighborhood 1: N1
+    Neighborhood 2: N2
+    Neighborhood Center: NC
+    Community Activity Center: CAC
+    Regional Activity Center: RAC
+    Commercial: COMM
+    Campus: CAMP
+    Manufacturing & Logistics: ML
+    Innovation Mixed-Use: IMU
+    Parks & Preserves: PP
+
 udo:
   out_dir: data/raw/udo
   # folder: each source's folder under out_dir. PDFs saved by hand directly in it (or in its

@@ -71,8 +71,10 @@ def _type_problems(types: dict) -> list[str]:
         allowed = _allowed(e.get("allowed"))
         if allowed not in ALLOWED:
             out.append(f"types.{t}.allowed must be one of {sorted(ALLOWED)}")
-        elif allowed != "no" and not isinstance(e.get("units_per_building"), int):
-            out.append(f"types.{t} has no units_per_building")
+        elif allowed != "no" and not isinstance(e.get("units_per_building"), int) \
+                and not (e.get("requires") or {}).get("max_building_length_ft"):
+            # units per building are either fixed or set by a building-length limit
+            out.append(f"types.{t} has no units_per_building or max_building_length_ft")
         if not e.get("source"):
             out.append(f"types.{t} has no source")
     return out

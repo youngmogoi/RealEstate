@@ -182,3 +182,39 @@ def test_rerun_and_rezoning_only_store_changes(loaded):
         )).one()
         new = conn.execute(text(f"SELECT zone_code FROM {S}.parcel_zoning WHERE pin = '00101102'")).scalar_one()
     assert old == ("GR", AS_OF, later) and new == "GR(CD)"
+
+
+def test_petition_of_main_district(loaded):
+    z = loaded[2]
+    assert z.loc[z["jurisdiction"] != "CHARLOTTE", "petition"].isna().all()  # towns publish none
+    # 02907118's petitioned I-1(CD) part is only its second district, so no main petition
+    assert pd.isna(z.loc["02907118", "petition"]) and z.loc["02907118", "second_zone_code"] == "I-1(CD)"
+
+
+def test_petition_from_largest_shape_of_main_district():
+    # one MX-2 parcel over two MX-2 rezonings (70% / 30%) and a sliver of N1-A
+    s = "test_zoning_petition"
+    engine = get_engine()
+    d = gpd.GeoDataFrame({
+        "jurisdiction": "CHARLOTTE", "zone_code": ["MX-2", "MX-2", "N1-A"],
+        "zone_class": None, "overlay": None, "spa": pd.array([pd.NA] * 3, dtype="boolean"),
+        "petition": ["2007-098", "1999-074(C)", None],
+        "rezone_date": pd.to_datetime(["2007-09-17", "2000-01-11", "2023-06-01"]),
+        "source_file": "synthetic", "source_row": [0, 1, 2],
+    }, geometry=[shapely.MultiPolygon([box(0, 0, 70, 100)]), shapely.MultiPolygon([box(70, 0, 100, 100)]),
+                 square(100, 0)], crs=2264)
+    towns = d.iloc[:0].copy()
+    with engine.begin() as conn:
+        conn.execute(text(f"DROP SCHEMA IF EXISTS {s} CASCADE; CREATE SCHEMA {s}"))
+        parcel = shapely.set_srid(shapely.MultiPolygon([box(0, 0, 101, 100)]), 2264)
+        copy_dataframe(conn, pd.DataFrame({"pin": ["P1"], "geom": [shapely.to_wkb(parcel, hex=True, include_srid=True)]}),
+                       f"{s}.parcels", {"geom": "geometry(MultiPolygon, 2264)"})
+    try:
+        load_districts(build_districts(d, towns), engine, AS_OF, s)
+        assign_parcels(engine, AS_OF, SPLIT, s)
+        with engine.connect() as conn:
+            r = conn.execute(text(f"SELECT zone_code, petition FROM {s}.parcel_zoning")).one()
+        assert r == ("MX-2", "2007-098")
+    finally:
+        with engine.begin() as conn:
+            conn.execute(text(f"DROP SCHEMA {s} CASCADE"))

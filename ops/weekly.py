@@ -32,6 +32,7 @@ STEPS = [
     ("county parcels (manual files)", "ingest.county_parcels"),
     ("zoning (manual files)", "ingest.zoning"),
     ("street centerlines (download)", "ingest.streets"),
+    ("2040 Policy Map place types (download)", "ingest.place_types"),
     ("utilities + city capital projects (download)", "ingest.utilities"),
     ("constraints (manual files + cached slope/soils)", "ingest.constraints"),
     ("NC OneMap check", "ingest.nconemap_check"),

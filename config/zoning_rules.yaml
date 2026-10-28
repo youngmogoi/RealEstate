@@ -496,9 +496,154 @@ districts:
       status: draft
       housing: site_plan             # by-right yield = null; no district table applied
       flag: site_plan_governs
-      petition: parcel_zoning.petition   # Charlotte zoning layer ZonePetiti; all 84 MX-2 shapes have one (2026-10)
+      petition: parcel_zoning.petition   # Charlotte zoning layer ZonePetiti; all 14,561 MX-2 parcels have one (2026-10)
       source: "UDO 1.4.C.1: a conditional district in place before 2023-06-01 follows its approved site plan and conditions, under the ordinances in effect at approval (vesting) or just before 2023-06-01 (vesting expired). The UDO has no MX-2 table; 20.9 lists MX-1/2/3 with the legacy (CD) districts."
       source_files: [CHARLOTTEUDO/2026-10-28/udo.pdf]
+    MX-1:
+      status: draft
+      housing: site_plan             # by-right yield = null; no district table applied
+      flag: site_plan_governs
+      petition: parcel_zoning.petition   # Charlotte zoning layer ZonePetiti; all 12,868 MX-1 parcels have one (2026-10)
+      source: "UDO 1.4.C.1: a conditional district in place before 2023-06-01 follows its approved site plan and conditions, under the ordinances in effect at approval (vesting) or just before 2023-06-01 (vesting expired). The UDO has no MX-1 table; 20.9 lists MX-1/2/3 with the legacy (CD) districts."
+      source_files: [CHARLOTTEUDO/2026-10-28/udo.pdf]
+    MX-3:
+      status: draft
+      housing: site_plan             # by-right yield = null; no district table applied
+      flag: site_plan_governs
+      petition: parcel_zoning.petition   # Charlotte zoning layer ZonePetiti; all 4,234 MX-3 parcels have one (2026-10)
+      source: "UDO 1.4.C.1: a conditional district in place before 2023-06-01 follows its approved site plan and conditions, under the ordinances in effect at approval (vesting) or just before 2023-06-01 (vesting expired). The UDO has no MX-3 table; 20.9 lists MX-1/2/3 with the legacy (CD) districts."
+      source_files: [CHARLOTTEUDO/2026-10-28/udo.pdf]
+    N2-B:
+      status: draft
+      housing: by_right
+      ordinance: Charlotte UDO, amended 2026-03-23
+      source_files:
+        - CHARLOTTEUDO/2026-10-28/udo.pdf
+        - CHARLOTTEUDO/2026-10-28/articles/article-05.html   # Tables 5-1 to 5-8
+        - CHARLOTTEUDO/2026-10-28/articles/article-15.html   # Table 15-1 use matrix
+      # Lot area is per BUILDING, not per unit (Table 5-1 row A). Several buildings on one parcel
+      # need the sum of their per-building minimums (note 2).
+      min_lot_sf:
+        value: 3000                  # per building: SF, duplex, triplex, quadraplex, MF attached
+        multifamily_stacked: 12000   # per building
+        per: building
+        source: "UDO 5.3.B, Table 5-1 row A and note 2"
+      min_lot_width_ft:
+        value: null                  # Table 5-1 sets none for SF to quadraplex; they use N1-E (30 ft) per 5.1
+        multifamily_attached: 50
+        multifamily_stacked: 80
+        multi_dwelling_development: 80
+        source: "UDO 5.3.B, Table 5-1 row C"
+      lot_standards_apply_to: {value: parent_parcel, source: "Table 5-1 note 1: lot standards apply to the parcel, not to individual sublots"}
+      max_building_coverage_pct: {applies: per_lot, value: 60, source: "UDO 5.3.B, Table 5-1 row E"}
+      max_height_ft:
+        value: 48
+        with_extra_setback: 65       # +1 ft per extra ft of side/rear setback (Table 5-3 note 3)
+        source: "UDO 5.3.D, Table 5-3 row A, notes 2-4"
+      setbacks_ft:
+        # Front ("frontage setback line") depends on the street type in the Charlotte Streets Map and
+        # is measured from the future back of curb (existing back of curb on local/collector streets).
+        front: "NEEDS_REVIEW: 20 ft default; by street type below"
+        front_by_street_type:
+          uptown_signature: 24
+          main_street: 24
+          linear_park: 36
+          avenue_boulevard_4_5_lane: 24
+          avenue_boulevard_6_plus_lane: 30
+          avenue_2_3_lane: 20
+          transit_station_path_park: 10   # measured from the property or right-of-way line (note 3)
+          uptown_primary: 20
+          other_primary: 20
+          secondary: 20
+          parkway: 20                     # measured from ROW
+          limited_access: 20              # measured from ROW
+        corner_side: null            # every street frontage takes its own frontage setback line
+        side: 5
+        rear: 10
+        rear_abutting_n1_place_type: 20
+        source: "UDO 5.3.C, Table 5-2 rows A, D, E and notes 1, 3"
+      flags:
+        rear_setback_varies:
+          when: "lot abuts a Neighborhood 1 place type (2040 Policy Map)"
+          rule: "rear setback 20 ft instead of 10"
+          source: "Table 5-2 row E"
+        height_step_down:
+          when: "within 200 ft of residential or vacant land in a Neighborhood 1 place type"
+          rule: "50 ft max in the first 100 ft, 65 ft from 100 to 200 ft"
+          source: "Table 5-3 note 2"
+        large_site_dwelling_mix:
+          when: "development site of 30 acres or more"
+          rule: "a mix of dwelling types is required; no one type over 90% of the units"
+          source: "UDO 15.4.HHH.4"
+      density:
+        max_upa: null                # no units-per-acre cap; per-building lot area and building length limit units
+        source: "UDO 5.3, Table 5-1 (no density row)"
+      open_space:
+        multifamily_attached_sf_per_unit: 150          # private, common or public (5.4.A.3)
+        stacked_or_multi_dwelling_pct_of_site: 10      # 5.4.A.1; MF attached in an MDD may use 150 sf/unit instead
+        source: "UDO 5.4.A"
+      types:
+        sfh:
+          allowed: conditional       # Table 15-1: PC
+          units_per_building: 1
+          requires: {develop_as: N1-E}   # N1-E lot and setback standards; height 48 ft (Table 5-3 note 4)
+          source: "UDO Table 15-1 (PC); 15.4.HH.1; 5.1"
+        duplex:
+          allowed: conditional
+          units_per_building: 2
+          requires: {develop_as: N1-E}
+          design: ["Common wall at least 20 ft deep (15.4.EE.1)."]
+          source: "UDO Table 15-1 (PC); 15.4.EE.1, 15.4.EE.3; 5.1"
+        triplex:
+          allowed: conditional
+          units_per_building: 3
+          requires: {develop_as: N1-E}
+          design: ["Common wall at least 20 ft deep (15.4.JJ.1)."]
+          source: "UDO Table 15-1 (PC); 15.4.JJ.1, 15.4.JJ.3; 5.1"
+        quadraplex:
+          allowed: conditional       # no arterial or affordability condition outside N1 (15.4.GG.3 is N1 only)
+          units_per_building: 4
+          requires: {develop_as: N1-E}
+          design: ["Common wall at least 20 ft deep (15.4.GG.1)."]
+          source: "UDO Table 15-1 (PC); 15.4.GG.1, 15.4.GG.4; 5.1"
+        townhome:
+          allowed: conditional       # 'Dwelling - Multi-Family Attached Unit', Table 15-1: PC
+          units_per_building: null   # building length / unit width; unit width is a product assumption, not zoning
+          requires:
+            min_lot_sf_per_building: 3000            # Table 5-1 row A
+            min_lot_width_ft: 50                     # Table 5-1 row C
+            max_building_length_ft: 150              # 15.4.FF.3
+            max_building_length_rear_loaded_ft: 400  # garages entered from side or rear (15.4.FF.3; Table 5-4 row B)
+            open_space_sf_per_unit: 150              # 5.4.A.3
+          units_per_building_assumption: "NEEDS_REVIEW: unit width (ft) to turn building length into units, to live in config/ with costs and prices"
+          design:
+            - "Units share a straight, continuous common wall at least 20 ft deep (15.4.FF.1)."
+          source: "UDO Table 15-1 (PC); 15.4.FF; Table 5-1; Table 5-4; 5.4.A.3"
+        adu:
+          allowed: conditional
+          units_per_building: 1
+          requires:
+            accessory_to: [sfh, duplex]
+            per_lot: 1
+            same_owner_as_principal: true
+            max_heated_sf: 1000
+          source: "UDO Table 15-1 (PC); 15.6.F"
+        multifamily_stacked:
+          allowed: yes               # Table 15-1: X (apartments, condos)
+          in_yield: "NEEDS_REVIEW: apartments need a massing model; flag only (apartments_possible)?"
+          requires: {min_lot_sf_per_building: 12000, min_lot_width_ft: 80, open_space_pct_of_site: 10}
+          source: "UDO Table 15-1 (X); Table 5-1; 5.4.A.1"
+        multi_dwelling_development:
+          allowed: conditional
+          requires:
+            building_separation_ft: 10
+            max_distance_to_street_ft: 400
+            min_lot_width_ft: 80
+          lot_area: "sum of each building's minimum lot area (Table 5-1 note 2)"
+          in_yield: false            # same unit count as separate building lots; flagged only
+          flag: multi_dwelling_possible
+          source: "UDO Table 15-1 (PC); 15.4.HHH; Table 5-1 note 2"
+      alternatives: {}               # the 4.5 conservation, mixed-income and compact options are N1 only
   CORNELIUS: {}
   DAVIDSON: {}
   HUNTERSVILLE: {}

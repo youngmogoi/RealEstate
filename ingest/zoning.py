@@ -8,7 +8,8 @@ Tables (each also has a `_history` table; see ingest/versioning.py):
   `geom` is the shape as published; `geom_effective` is what remains after overlaps are
   resolved (below), and is what parcels are measured against.
 - parcel_zoning: one row per parcel: the district covering the largest share of it, the
-  runner-up, and a `split` flag.
+  runner-up, and a `split` flag. `petition` is the rezoning petition of the main district's
+  shape covering most of the parcel (Charlotte only), so the approved site plan can be found.
 
 Overlaps (the layers are not perfectly clean; checked 2026-10-27):
 - A town district beats a Charlotte district where they overlap.
@@ -181,7 +182,7 @@ def load_districts(districts: pd.DataFrame, engine: Engine, as_of: date, schema:
 # Step 1: every parcel/district-piece overlap, computed once.
 HITS_SQL = """
 CREATE UNLOGGED TABLE {s}.zoning_hits AS
-SELECT p.pin, z.jurisdiction, z.zone_code, z.overlay, ST_Area(p.geom) AS pa,
+SELECT p.pin, z.jurisdiction, z.zone_code, z.overlay, z.petition, ST_Area(p.geom) AS pa,
        CASE WHEN ST_CoveredBy(p.geom, z.geom) THEN ST_Area(p.geom)
             ELSE ST_Area(ST_Intersection(p.geom, z.geom)) END AS a
 FROM {s}.parcels p JOIN {s}.zoning_pieces z ON ST_Intersects(p.geom, z.geom)
@@ -207,6 +208,13 @@ overlays AS (
           GROUP BY pin, overlay HAVING sum(a) / max(pa) >= :m) o
     GROUP BY pin
 ),
+petitions AS (
+    SELECT DISTINCT ON (h.pin) h.pin, h.petition
+    FROM {s}.zoning_hits h JOIN ranked r ON r.pin = h.pin AND r.n = 1
+         AND r.jurisdiction = h.jurisdiction AND r.zone_code = h.zone_code
+    WHERE h.petition IS NOT NULL
+    GROUP BY h.pin, h.petition ORDER BY h.pin, sum(h.a) DESC, h.petition
+),
 ties AS (
     SELECT p.pin, least(1, sum(ST_Area(ST_Intersection(p.geom, c.geom))) / max(ST_Area(p.geom))) AS share
     FROM {s}.parcels p JOIN {s}.zoning_conflict_pieces c ON ST_Intersects(p.geom, c.geom) GROUP BY p.pin
@@ -223,13 +231,15 @@ SELECT p.pin,
        greatest(0, 1 - coalesce(t.covered, 0)) AS unzoned_share,
        coalesce(ti.share, 0) AS tie_share,
        coalesce(ti.share, 0) >= :m AS overlap_conflict,
-       o.overlays
+       o.overlays,
+       pt.petition
 FROM {s}.parcels p
 LEFT JOIN ranked r1 ON r1.pin = p.pin AND r1.n = 1
 LEFT JOIN ranked r2 ON r2.pin = p.pin AND r2.n = 2
 LEFT JOIN totals t ON t.pin = p.pin
 LEFT JOIN overlays o ON o.pin = p.pin
 LEFT JOIN ties ti ON ti.pin = p.pin
+LEFT JOIN petitions pt ON pt.pin = p.pin
 """
 
 
@@ -243,7 +253,7 @@ def assign_parcels(engine: Engine, as_of: date, split_min_share: float, schema: 
     with engine.begin() as conn:
         conn.execute(text(f"DROP TABLE IF EXISTS {s}.zoning_pieces"))
         conn.execute(text(
-            f"CREATE UNLOGGED TABLE {s}.zoning_pieces AS SELECT jurisdiction, zone_code, overlay, "
+            f"CREATE UNLOGGED TABLE {s}.zoning_pieces AS SELECT jurisdiction, zone_code, overlay, petition, "
             f"ST_Subdivide(geom_effective, 256) AS geom FROM {s}.zoning_districts WHERE NOT ST_IsEmpty(geom_effective)"
         ))
         conn.execute(text(f"CREATE INDEX ON {s}.zoning_pieces USING gist (geom)"))

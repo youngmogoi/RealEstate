@@ -142,5 +142,12 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
 - There is no ETJ layer; etj_jurisdiction = zoning jurisdiction of an unincorporated parcel.
   Year built is from the NC OneMap 2026-01-07 snapshot (the county files have none); heated
   square feet has no source until "Tax Parcel CAMA Data" is downloaded.
+- 2026-10-28: the 2040 Policy Map (place types) is not on the city map server; it is the
+  city's ArcGIS Online layer Charlotte_Future_2040_Policy_Map (services.arcgis.com/9Nl857LBlQVyzq54),
+  found via the official viewer's web map. Its short code disagrees with the full name on 8
+  shapes and 2 shapes have no geometry; the full name is used (`make place-types`).
+- A column added to a versioned table is filled in place on unchanged rows (no history churn).
+  Even so, one day of reloads (zoning, place types, features) grew Docker's disk image from
+  5.2 to 7.3 GB while the database is 2.2 GB: the image never shrinks on its own.
 - This PC has 7 GB RAM and a small, nearly full C: drive. Load big files in chunks, and
   don't let Docker's disk fill up: it corrupted Postgres once.

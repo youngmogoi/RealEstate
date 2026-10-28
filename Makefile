@@ -1,4 +1,4 @@
-.PHONY: up down test ingest ingest-nconemap zoning utilities constraints streets features changes weekly refresh-manual udo zoning-rules score digest
+.PHONY: up down test ingest ingest-nconemap zoning utilities constraints streets place-types features changes weekly refresh-manual udo zoning-rules score digest
 
 .env:
 	cp .env.example .env
@@ -26,6 +26,9 @@ constraints:
 
 zoning:
 	uv run python -m ingest.zoning
+
+place-types:
+	uv run python -m ingest.place_types
 
 streets:
 	uv run python -m ingest.streets
