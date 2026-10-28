@@ -52,12 +52,13 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
 ## Weekly refresh
 - `make weekly` reloads every source, rebuilds parcel_features, writes changes, and logs to
   logs/weekly_<date>_<time>.log (first line = STATUS; failures name the step and error).
-  Takes ~30 min. County layers are manual: `make refresh-manual` lists them with their ages;
+  Takes ~20 min. County layers are manual: `make refresh-manual` lists them with their ages;
   the log warns when one is over 90 days old.
 - Scheduled with Windows Task Scheduler (this PC is Windows; cron/launchd don't apply), Sundays
   22:00, via scripts/weekly.cmd (starts Docker Desktop if needed). The PC must be on and you
   logged in at that time.
-  - install: `schtasks /Create /TN "NC Land Weekly" /TR "\"C:\Users\josko\OneDrive\Documents\RealEstate\scripts\weekly.cmd\"" /SC WEEKLY /D SUN /ST 22:00 /F`
+  - install (works in PowerShell and cmd; the path has no spaces, so no inner quotes):
+    `schtasks /Create /TN "NC Land Weekly" /TR "C:\Users\josko\OneDrive\Documents\RealEstate\scripts\weekly.cmd" /SC WEEKLY /D SUN /ST 22:00 /F`
   - check: `schtasks /Query /TN "NC Land Weekly" /V /FO LIST`
   - run now: `schtasks /Run /TN "NC Land Weekly"`
   - remove: `schtasks /Delete /TN "NC Land Weekly" /F`
