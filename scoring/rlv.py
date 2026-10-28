@@ -8,31 +8,34 @@ Tables (each versioned, history in <table>_history; see ingest/versioning.py):
 1. comp_sales: new-construction sales (rules in economics.yaml `comps`), one row per sale, with
    the sold account's CAMA heated sf and building type, $/heated sf, and geom = a point on the
    sold parcel. Product: sfh, townhome, or plex (duplex/triplex/quadraplex pooled).
-2. parcel_comps: per parcel with by-right yield and per product: median $/heated sf of the
-   comps within 1 mile, widened to 2 then 3 miles while there are fewer than min_comps;
-   comp_count, radius_mi, size_cap_sf (the market cap on house size: a percentile of the same
-   comps' heated sf) and thin_comps. The comps behind a row are that product's comp_sales within
-   radius_mi of the parcel's point on surface (comps_for() lists them).
+2. parcel_comps: per parcel with by-right yield and per product: median $/heated sf, median sale
+   price and median heated sf of the comps within 1 mile, widened to 2 then 3 miles while there
+   are fewer than min_comps; comp_count, radius_mi, thin_comps. The comps behind a row are that
+   product's comp_sales within radius_mi of the parcel's point on surface (comps_for() lists them).
 3. sales_ratios: median sale price / current assessed value by municipality and land class.
 4. parcel_rlv_options: one row per parcel, option and sewer case ('public', or 'septic' where
-   sewer is unknown outside town limits), holding every input and cost line:
-       rlv = revenue - build_cost - soft_cost - profit + adu_premium - site_work - obligation_cost
-   A cost whose config value is blank is NULL here and named in blank_inputs; the RLV leaves it
-   out (an upper bound). Options: cur_<type> (the lot as it is), split_<type> (2+ lots),
-   sub_standard / sub_conservation / sub_compact / sub_mixed_income (2+ lots), townhome (by right,
-   or kind 'rezoning'), and if_crossed_* (kind 'if_crossed', plus the creek crossing cost).
+   sewer is unknown outside town limits), holding every input and cost line (see the formulas in
+   config/economics.yaml). A cost whose config value is blank is NULL here and named in
+   blank_inputs; the RLV leaves it out (an upper bound). Options: cur_<type> (rebuild on the lot
+   as it is), split_<type> (2+ lots), split_<type>_keep_house (the existing house stays on one of
+   the lots), sub_standard / sub_conservation / sub_compact / sub_mixed_income (2+ lots, lot
+   model), townhome (by right, or kind 'rezoning'), and if_crossed_* (kind 'if_crossed', plus the
+   creek crossing cost).
 5. parcel_rlv: per parcel, the best use (highest by-right RLV), the best rezoning and if-crossed
    options (reported, never the best use), the "if sewer available" RLV, price, score and flags.
    Price = asking price if listed (no listings source yet), else assessed value x sales ratio.
-   Score = best RLV - price; blank for parcels never scored as opportunities (economics `score`).
+   Score = best RLV - price; blank for parcels never scored (economics `score`), which keep an
+   exclusion_category; golf courses and clubs are also on redevelopment_watch.
 
-House size per option: footprint = the smaller of the setback envelope and max building
-coverage on the option's lot (district minimum lot for subdivision lots; townhome = the unit
-footprint in scoring.yaml), times floors (max height / story height, capped), capped by the
-market (size_cap_sf). Plex sizes and prices are per building; units share it equally.
+House size (house model): the median heated sf of the nearby comps for the product, capped by
+zoning: footprint = the smaller of the setback envelope and max building coverage on the option's
+lot (townhome = the unit footprint in scoring.yaml), times floors (max height / story height,
+capped). Plex units are priced from townhome comps x duplex_discount (comp_proxy) until the plex
+pool has min_real_sales nearby; a plex building then holds its units at the townhome median size.
 """
 
 import argparse
+import fnmatch
 import importlib
 import json
 import math
@@ -54,32 +57,40 @@ FT_PER_MILE = 5_280
 CORE = ["build_cost_per_sf", "soft_cost_pct", "target_profit_pct"]
 SUB_COLS = {"sub_standard": "sub_lots", "sub_conservation": "sub_conservation_lots",
             "sub_compact": "sub_compact_lots", "sub_mixed_income": "sub_mixed_income_lots"}
-SEPTIC_OPTIONS = ["cur_sfh", "split_sfh", "sub_standard"]
+SEPTIC_OPTIONS = ["cur_sfh", "split_sfh", "split_sfh_keep_house", "sub_standard"]
 
 OPTION_COLS = {
-    "pin": "str", "option": "str", "sewer": "str", "kind": "str", "product": "str",
-    "units": "int", "units_per_building": "int", "buildings": "float", "affordable_units": "int",
+    "pin": "str", "option": "str", "sewer": "str", "kind": "str", "model": "str", "product": "str",
+    "yield_units": "int", "units": "int", "over_project_cap": "bool", "units_per_building": "int",
+    "buildings": "float", "affordable_units": "int",
     "lot_sf": "float", "lot_width_ft": "float", "lot_depth_ft": "float",
     "envelope_sf": "float", "coverage_sf": "float", "footprint_sf": "float", "height_ft": "float", "stories": "int",
-    "zoning_max_sf": "float", "market_cap_sf": "float", "size_sf": "float",
-    "comp_radius_mi": "float", "comp_count": "int", "price_per_sf": "float", "thin_comps": "bool",
-    "unit_price": "float", "revenue": "float", "build_cost": "float", "soft_cost": "float", "profit": "float",
-    "adu_premium": "float", "sewer_ft": "float", "sewer_cost": "float", "road_ft": "float", "road_cost": "float",
+    "zoning_max_sf": "float", "comp_median_sf": "float", "size_sf": "float",
+    "comp_product": "str", "comp_radius_mi": "float", "comp_count": "int", "price_per_sf": "float",
+    "comp_median_price": "float", "thin_comps": "bool", "comp_proxy": "bool",
+    "unit_price": "float", "lot_price": "float", "revenue": "float", "build_cost": "float", "soft_cost": "float",
+    "profit": "float", "development_cost": "float", "absorption_months": "int", "discount_factor": "float",
+    "discount_cost": "float", "adu_premium": "float", "retained_value": "float",
+    "existing_heated_sf": "float", "demolition_cost": "float",
+    "sewer_ft": "float", "sewer_cost": "float", "road_ft": "float", "road_cost": "float",
     "stormwater_cost": "float", "slope_acres": "float", "slope_cost": "float", "floodplain_units": "int",
     "floodplain_cost": "float", "crossing_cost": "float", "site_work": "float", "obligation_cost": "float",
     "rlv": "float", "blank_inputs": "str", "notes": "str",
 }
 PARCEL_COLS = {
     "pin": "str", "site_address": "str", "jurisdiction": "str", "zone_code": "str", "municipality": "str",
-    "area_sf": "float", "sewer_basis": "str", "sewer_status": "str", "sewer_confidence": "str", "sewer_source": "str",
+    "land_use": "str", "owner_type": "str", "area_sf": "float", "building_value": "float",
+    "existing_heated_sf": "float",
+    "sewer_basis": "str", "sewer_status": "str", "sewer_confidence": "str", "sewer_source": "str",
     "scored_on": "str", "best_option": "str", "best_product": "str", "best_units": "int", "best_rlv": "float",
     "if_sewer_option": "str", "if_sewer_rlv": "float", "rezoning_option": "str", "rezoning_rlv": "float",
     "if_crossed_option": "str", "if_crossed_rlv": "float",
     "asking_price": "float", "assessed_value": "float", "land_class": "str", "ratio": "float", "ratio_group": "str",
-    "ratio_sales": "int", "price": "float", "price_basis": "str", "score": "float", "excluded_reason": "str",
-    "verify_sewer": "bool", "sewer_low_confidence": "bool", "sewer_unverified_high_score": "bool",
-    "thin_comps": "bool", "plex_pooled": "bool", "rlv_incomplete": "bool", "blank_inputs": "str",
-    "verify_acreage": "bool", "septic_soils_very_limited": "bool", "no_value_reason": "str",
+    "ratio_sales": "int", "price": "float", "price_basis": "str", "score": "float",
+    "exclusion_category": "str", "excluded_reason": "str", "redevelopment_watch": "bool",
+    "verify_sewer": "bool", "sewer_low_confidence": "bool", "sewer_assumed_new_units": "bool",
+    "thin_comps": "bool", "comp_proxy": "bool", "over_project_cap": "bool", "rlv_incomplete": "bool",
+    "blank_inputs": "str", "verify_acreage": "bool", "septic_soils_very_limited": "bool", "no_value_reason": "str",
 }
 DTYPES = {"str": "object", "int": "Int64", "float": "float64", "bool": "boolean"}
 
@@ -131,17 +142,19 @@ ORDER BY s.pin
 """
 
 COMPS_COLS = {"pin": "str", "product": "str", "radius_mi": "float", "comp_count": "int",
-              "median_price_per_sf": "float", "size_cap_sf": "float", "thin_comps": "bool"}
+              "median_price_per_sf": "float", "median_sale_price": "float", "median_heated_sf": "float",
+              "thin_comps": "bool"}
 
 
-def comp_stats(targets: pd.DataFrame, comps: pd.DataFrame, cfg: dict, cap_pct: float, batch: int = 10_000) -> pd.DataFrame:
-    """parcel_comps rows. targets: pin, x, y; comps: product, x, y, price_per_sf, heated_sf (EPSG:2264 feet).
+def comp_stats(targets: pd.DataFrame, comps: pd.DataFrame, cfg: dict, batch: int = 10_000) -> pd.DataFrame:
+    """parcel_comps rows. targets: pin, x, y; comps: product, x, y, price_per_sf, sale_price, heated_sf
+    (EPSG:2264 feet).
 
     Per product, comps within the first radius; parcels with fewer than min_comps are searched again
     at the next radius, so each parcel keeps the smallest radius with enough comps, else the widest
-    (thin_comps). Medians and the size cap are linear-interpolated percentiles (as percentile_cont).
-    Done here with a spatial index in batches, not in SQL: 206k parcels x 3 miles is ~80M pairs,
-    which Postgres sorted on disk (it filled C: on 2026-10-28)."""
+    (thin_comps). Medians are interpolated (as percentile_cont). Done here with a spatial index in
+    batches, not in SQL: 206k parcels x 3 miles is ~80M pairs, which Postgres sorted on disk (it
+    filled C: on 2026-10-28)."""
     import numpy as np
     import shapely
 
@@ -151,28 +164,29 @@ def comp_stats(targets: pd.DataFrame, comps: pd.DataFrame, cfg: dict, cap_pct: f
     for product in cfg["products"]:
         cg = comps[comps["product"] == product]
         tree = shapely.STRtree(shapely.points(cg["x"].to_numpy(), cg["y"].to_numpy()))
-        ppsf, sf = cg["price_per_sf"].to_numpy(), cg["heated_sf"].to_numpy()
+        ppsf, price, sf = cg["price_per_sf"].to_numpy(), cg["sale_price"].to_numpy(), cg["heated_sf"].to_numpy()
         found: dict[int, tuple] = {}
         todo = np.arange(len(targets))
         for r in radii:
             for i in range(0, len(todo), batch):
                 b = todo[i:i + batch]
                 ti, ci = tree.query(pts[b], predicate="dwithin", distance=r * FT_PER_MILE)
-                pairs = pd.DataFrame({"t": b[ti], "ppsf": ppsf[ci], "sf": sf[ci]})
-                g = pairs.groupby("t")
-                for t, n, med, cap in zip(g.size().index, g.size(), g["ppsf"].median(), g["sf"].quantile(cap_pct)):
-                    found[t] = (r, int(n), float(med), float(cap))
+                g = pd.DataFrame({"t": b[ti], "ppsf": ppsf[ci], "price": price[ci], "sf": sf[ci]}).groupby("t")
+                med = g.median()
+                for t, n, m_ppsf, m_price, m_sf in zip(med.index, g.size(), med["ppsf"], med["price"], med["sf"]):
+                    found[t] = (r, int(n), float(m_ppsf), float(m_price), float(m_sf))
             todo = np.array([t for t in todo if t not in found or found[t][1] < min_n], dtype=int)
         for t, pin in enumerate(targets["pin"]):
-            r, n, med, cap = found.get(t, (max(radii), 0, None, None))
+            r, n, m_ppsf, m_price, m_sf = found.get(t, (max(radii), 0, None, None, None))
             rows.append({"pin": pin, "product": product, "radius_mi": r, "comp_count": n,
-                         "median_price_per_sf": med, "size_cap_sf": cap, "thin_comps": n < min_n})
+                         "median_price_per_sf": m_ppsf, "median_sale_price": m_price, "median_heated_sf": m_sf,
+                         "thin_comps": n < min_n})
     return _frame(rows, COMPS_COLS).sort_values(["pin", "product"]).reset_index(drop=True)
 
 
 def build_comps(engine: Engine, econ: dict, sales_as_of: date, run_date: date, s: str = "public") -> dict:
     """Rebuild comp_sales and parcel_comps. Returns change counts."""
-    c, hs = econ["comps"], econ["house_size"]
+    c = econ["comps"]
     pairs = [(t, prod) for prod, types in c["products"].items() for t in types]
     params = {"as_of": sales_as_of, "start": window_start(sales_as_of, c["window_months"]), "max_age": c["max_age_years"],
               "min_ppsf": c["min_price_per_sf"], "max_ppsf": c["max_price_per_sf"],
@@ -181,12 +195,12 @@ def build_comps(engine: Engine, econ: dict, sales_as_of: date, run_date: date, s
         create_staging_from_query(conn, f"{s}.comp_sales_staging", COMP_SALES_SQL.format(s=s), params)
         sales = apply_versioned(conn, f"{s}.comp_sales", ["account_pin", "transfer_id", "property_id"], run_date)
         conn.execute(text(f"CREATE INDEX IF NOT EXISTS comp_sales_geom_idx ON {s}.comp_sales USING gist (geom)"))
-        comps = pd.read_sql(text(f"SELECT product, ST_X(geom) AS x, ST_Y(geom) AS y, price_per_sf, heated_sf "
+        comps = pd.read_sql(text(f"SELECT product, ST_X(geom) AS x, ST_Y(geom) AS y, price_per_sf, sale_price, heated_sf "
                                  f"FROM {s}.comp_sales ORDER BY account_pin, transfer_id, property_id"), conn)
         targets = pd.read_sql(text(
             f"SELECT y.pin, ST_X(g) AS x, ST_Y(g) AS y FROM {s}.parcel_yield y "
             f"JOIN {s}.parcels p USING (pin), ST_PointOnSurface(p.geom) g WHERE y.yield_basis = 'by_right' ORDER BY y.pin"), conn)
-    df = comp_stats(targets, comps, c, hs["market_cap_percentile"])
+    df = comp_stats(targets, comps, c)
     with engine.begin() as conn:
         changes = _store(conn, df, f"{s}.parcel_comps", ["pin", "product"], run_date)
     return {"comp_sales": sales, "parcel_comps": changes}
@@ -277,14 +291,17 @@ def _height(rule: dict) -> float | None:
 
 def _opt(name: str, kind: str, product: str, units: int, upb: int, std: dict, height_rule: dict,
          lot_sf: float | None, width: float | None, depth: float | None, creates_lots: bool, **extra) -> dict:
-    return {"option": name, "kind": kind, "product": product, "units": int(units), "units_per_building": upb,
-            "std": std, "height_ft": _height(height_rule), "lot_sf": lot_sf, "lot_width_ft": width,
-            "lot_depth_ft": depth, "creates_lots": creates_lots, "footprint_sf": None, "affordable_units": 0,
+    """model: house | lot; project: absorption and the project cap apply; removes_building: the
+    existing building (if any) is demolished; keep_house: it stays and its value is retained."""
+    return {"option": name, "kind": kind, "model": "house", "product": product, "units": int(units),
+            "units_per_building": upb, "std": std, "height_ft": _height(height_rule), "lot_sf": lot_sf,
+            "lot_width_ft": width, "lot_depth_ft": depth, "creates_lots": creates_lots, "project": False,
+            "removes_building": True, "keep_house": False, "footprint_sf": None, "affordable_units": 0,
             "adu": False, "notes": []} | extra
 
 
 def _sub_specs(rules: dict, j: str, rule: dict) -> dict:
-    """(lot sf, lot width, standards rule) of a new lot in each subdivision option."""
+    """(lot sf, lot width, standards rule, notes) of a new lot in each subdivision option."""
     types, alts = rule["types"], rule.get("alternatives") or {}
     lot, width = Y.type_standards(rules, j, rule, "sfh") if Y._allowed(types.get("sfh")) else (
         rule["min_lot_sf"]["value"], rule["min_lot_width_ft"]["value"] or 0)
@@ -292,7 +309,7 @@ def _sub_specs(rules: dict, j: str, rule: dict) -> dict:
     specs = {"sub_standard": (lot, width, std, [])}
     if c := alts.get("conservation"):
         cut = 1 - c["lot_area_and_width_reduction_pct"] / 100
-        specs["sub_conservation"] = (lot * cut, width * cut, std, ["conservation lots: district setbacks used (4.5.A cuts them)"])
+        specs["sub_conservation"] = (lot * cut, width * cut, std, [])
     if c := alts.get("compact"):
         specs["sub_compact"] = (c["min_lot_sf"], c["min_lot_width_ft"],
                                 {"setbacks_ft": c["setbacks_ft"], "max_building_coverage_pct": c.get("max_building_coverage_pct")}, [])
@@ -313,6 +330,7 @@ def yield_options(p: dict, rules: dict, scoring_cfg: dict) -> list[dict]:
     area, width, depth, frontage = p["area_sf"], p.get("lot_width_ft"), p.get("lot_depth_ft"), p.get("frontage_ft")
     split_w = min(width, frontage) if width and frontage else (width or frontage)
     adu_to = ((types.get("adu") or {}).get("requires") or {}).get("accessory_to", [])
+    built = not p.get("vacant")
     out = []
     for t in Y.TYPES:
         e = types.get(t) or {}
@@ -326,8 +344,13 @@ def yield_options(p: dict, rules: dict, scoring_cfg: dict) -> list[dict]:
                             affordable_units=aff * (p[f"cur_{t}"] // upb), adu=bool(p.get("adu_allowed")) and t in adu_to))
         if (p.get("split_lots") or 0) >= 2 and p.get(f"split_{t}"):
             n_lots = p[f"split_{t}"] // upb
-            out.append(_opt(f"split_{t}", "by_right", product, p[f"split_{t}"], upb, std, rule, area / n_lots,
-                            split_w / n_lots if split_w else None, depth, True, affordable_units=aff * n_lots))
+            lot = (area / n_lots, split_w / n_lots if split_w else None, depth)
+            out.append(_opt(f"split_{t}", "by_right", product, p[f"split_{t}"], upb, std, rule, *lot, True,
+                            affordable_units=aff * n_lots, n_lots=n_lots))
+            if built:      # the existing house stays on one lot; new buildings on the others
+                out.append(_opt(f"split_{t}_keep_house", "by_right", product, (n_lots - 1) * upb, upb, std, rule, *lot,
+                                True, affordable_units=aff * (n_lots - 1), n_lots=n_lots, removes_building=False,
+                                keep_house=True))
 
     specs = _sub_specs(rules, j, rule)
     th = scoring_cfg["townhome"]
@@ -342,13 +365,13 @@ def yield_options(p: dict, rules: dict, scoring_cfg: dict) -> list[dict]:
                 aff = p["sub_mixed_income_affordable_units"] if not prefix else \
                     Y.mixed_income_affordable(n - (p.get("if_crossed_sub_lots") or 0))
             out.append(_opt(prefix + name, kind, "sfh", n, 1, std, rule, lot, w, lot / w if w else None, True,
-                            affordable_units=aff, notes=list(notes)))
+                            affordable_units=aff, notes=list(notes), model="lot", project=True))
         if units := p.get(prefix + "townhome_units"):
             rezoning = bool(p.get("townhome_needs_rezoning"))
             target = Y.district_rule(rules, j, p["townhome_target_district"]) if rezoning else rule
             k = kind if prefix else ("rezoning" if rezoning else "by_right")
             out.append(_opt(prefix + "townhome", k, "townhome", units, 1, target, target, None, None, None, True,
-                            footprint_sf=th["unit_width_ft"] * th["unit_depth_ft"],
+                            footprint_sf=th["unit_width_ft"] * th["unit_depth_ft"], project=True,
                             notes=[f"needs rezoning to {p['townhome_target_district']} (speculative)"] if rezoning else []))
     return out
 
@@ -363,11 +386,12 @@ def septic_options(p: dict, rules: dict, scoring_cfg: dict, septic_min_sf: float
         if o["option"] == "cur_sfh":
             if p["area_sf"] >= septic_min_sf:
                 out.append(o)
-        elif o["option"] == "split_sfh":
-            n = min(o["units"], Y._floor(p["area_sf"] / septic_min_sf))
-            if n >= 2:
-                w = o["lot_width_ft"] * o["units"] / n if o["lot_width_ft"] else None
-                out.append(o | {"units": n, "lot_sf": p["area_sf"] / n, "lot_width_ft": w})
+        elif o["option"].startswith("split_sfh"):
+            n_lots = min(o["n_lots"], Y._floor(p["area_sf"] / septic_min_sf))
+            units = n_lots - 1 if o["keep_house"] else n_lots
+            if n_lots >= 2 and units >= 1:
+                w = o["lot_width_ft"] * o["n_lots"] / n_lots if o["lot_width_ft"] else None
+                out.append(o | {"units": units, "n_lots": n_lots, "lot_sf": p["area_sf"] / n_lots, "lot_width_ft": w})
         else:
             n = min(o["units"], Y._floor((p.get("net_sf") or 0) * scoring_cfg["yield"]["usable_ratio"] / septic_min_sf))
             if n >= 2:
@@ -417,10 +441,37 @@ def floodplain_units(o: dict, p: dict, house_fp_sf: float | None) -> int:
     return Y._floor(o["units"] * share)
 
 
+def discount_factor(units: int, per_month: float, annual_pct: float) -> tuple[int, float]:
+    """(sell-out months, present-value factor): units sold evenly over ceil(units / per_month)
+    months, month m's sales discounted by (1 + rate) ^ -(m / 12)."""
+    months = max(math.ceil(units / per_month), 1)
+    r = annual_pct / 100
+    return months, sum((1 + r) ** (-m / 12) for m in range(1, months + 1)) / months
+
+
+def comp_basis(o: dict, comps: dict, econ: dict) -> dict:
+    """Which comps price an option: its product's, or for plex the townhome comps x duplex_discount
+    (comp_proxy) until the plex pool has min_real_sales nearby. Returns comp fields and the size of
+    one building before the zoning cap (comp_median_sf)."""
+    pc = econ["plex"]
+    if o["product"] == "plex" and (comps.get("plex") or {}).get("comp_count", 0) < pc["min_real_sales"]:
+        c, d = comps.get("townhome") or {}, pc.get("duplex_discount")
+        ppsf = c.get("median_price_per_sf")
+        unit_sf = c.get("median_heated_sf")
+        return {"comp_product": "townhome", "comp_radius_mi": c.get("radius_mi"), "comp_count": c.get("comp_count", 0),
+                "price_per_sf": None if ppsf is None or d is None else ppsf * d, "comp_median_price": None,
+                "comp_median_sf": None if unit_sf is None else unit_sf * o["units_per_building"],
+                "thin_comps": bool(c.get("thin_comps", True)), "comp_proxy": True, "_blank": d is None and ppsf is not None}
+    c = comps.get(o["product"]) or {}
+    return {"comp_product": o["product"], "comp_radius_mi": c.get("radius_mi"), "comp_count": c.get("comp_count", 0),
+            "price_per_sf": c.get("median_price_per_sf"), "comp_median_price": c.get("median_sale_price"),
+            "comp_median_sf": c.get("median_heated_sf"), "thin_comps": bool(c.get("thin_comps", True)),
+            "comp_proxy": False, "_blank": False}
+
+
 def value_option(o: dict, p: dict, comps: dict, econ: dict, basis: str, sewer: str) -> dict:
     """One option's RLV with every input (a parcel_rlv_options row)."""
-    costs, sw, hs = econ["costs"], econ["site_work"], econ["house_size"]
-    c = comps.get(o["product"]) or {}
+    costs, sw, hs, proj = econ["costs"], econ["site_work"], econ["house_size"], econ["project"]
     blanks, notes = [], list(o["notes"])
 
     def item(name: str, qty: float, rate: float | None) -> float | None:
@@ -431,61 +482,109 @@ def value_option(o: dict, p: dict, comps: dict, econ: dict, basis: str, sewer: s
             return None
         return qty * rate
 
+    units, over_cap = o["units"], False
+    if o["project"] and proj.get("max_lots_per_project") and units > proj["max_lots_per_project"]:
+        units, over_cap = proj["max_lots_per_project"], True
+        notes.append(f"valued at the project cap of {units} of {o['units']} {'lots' if o['model'] == 'lot' else 'units'}")
+    upb = o["units_per_building"]
+    buildings = units / upb
+    cb = comp_basis(o, comps, econ)
+    if cb.pop("_blank"):
+        blanks.append("duplex_discount")
+    if cb["comp_proxy"]:
+        notes.append("priced from townhome comps x duplex_discount (comp_proxy)")
     envelope, coverage, fp = footprint(o)
     stories = min(int(o["height_ft"] // hs["story_height_ft"]), hs["max_stories"]) if o["height_ft"] else hs["max_stories"]
-    if not o["height_ft"]:
-        notes.append("no height limit in the rule: max_stories used")
     zoning_max = fp * stories if fp is not None else None
-    cap = c.get("size_cap_sf")
-    sizes = [x for x in (zoning_max, cap) if x is not None]
-    size = min(sizes) if sizes else None
-    if zoning_max is None:
-        notes.append("zoning size unknown (no lot width/depth or coverage)")
-    upb = o["units_per_building"]
-    buildings = o["units"] / upb
-    row = {"pin": p["pin"], "option": o["option"], "sewer": sewer, "kind": o["kind"], "product": o["product"],
-           "units": o["units"], "units_per_building": upb, "buildings": buildings,
-           "affordable_units": o["affordable_units"], "lot_sf": o["lot_sf"], "lot_width_ft": o["lot_width_ft"],
-           "lot_depth_ft": o["lot_depth_ft"], "envelope_sf": envelope, "coverage_sf": coverage, "footprint_sf": fp,
-           "height_ft": o["height_ft"], "stories": stories, "zoning_max_sf": zoning_max, "market_cap_sf": cap,
-           "size_sf": size, "comp_radius_mi": c.get("radius_mi"), "comp_count": c.get("comp_count", 0),
-           "price_per_sf": c.get("median_price_per_sf"), "thin_comps": bool(c.get("thin_comps", True))}
-    if o["product"] == "plex":
-        notes.append("plex comps pool duplex, triplex and quadraplex")
-    ppsf = row["price_per_sf"]
-    if size is None or ppsf is None or size <= 0:
-        notes.append("no comps within the widest radius" if ppsf is None else "no buildable house size")
-        return row | {"notes": "; ".join(dict.fromkeys(notes)) or None, "blank_inputs": None}
+    affordable = min(o["affordable_units"], units)
+    row = dict.fromkeys(OPTION_COLS) | {
+           "pin": p["pin"], "option": o["option"], "sewer": sewer, "kind": o["kind"], "model": o["model"],
+           "product": o["product"], "yield_units": o["units"], "units": units, "over_project_cap": over_cap,
+           "units_per_building": upb, "buildings": buildings, "affordable_units": affordable,
+           "lot_sf": o["lot_sf"], "lot_width_ft": o["lot_width_ft"], "lot_depth_ft": o["lot_depth_ft"],
+           "existing_heated_sf": p.get("existing_heated_sf")} | cb
 
-    revenue = buildings * ppsf * size
-    build = buildings * costs["build_cost_per_sf"] * size
-    soft = build * costs["soft_cost_pct"] / 100
-    profit = revenue * costs["target_profit_pct"] / 100
-    unit_price = ppsf * size / upb
+    if o["model"] == "lot":
+        ratio = econ["subdivision"].get("lot_to_home_ratio")
+        if ratio is None:
+            blanks.append("lot_to_home_ratio")
+        home = cb["comp_median_price"]
+        if home is None or ratio is None:
+            notes.append("no comps within the widest radius" if home is None else "no finished lot price")
+            return row | {"notes": "; ".join(dict.fromkeys(notes)) or None, "blank_inputs": ", ".join(blanks) or None}
+        lot_price = ratio * home
+        revenue = units * lot_price
+        unit_price, house_fp = home, None
+        dev = item("development_cost_per_lot", units, econ["subdivision"].get("development_cost_per_lot"))
+        build = soft = profit = None
+        margin = revenue
+        row |= {"lot_price": lot_price, "development_cost": dev}
+    else:
+        if not o["height_ft"]:
+            notes.append("no height limit in the rule: max_stories used")
+        sizes = [x for x in (zoning_max, cb["comp_median_sf"]) if x is not None]
+        size = min(sizes) if sizes else None
+        if zoning_max is None:
+            notes.append("zoning size unknown (no lot width/depth or coverage)")
+        row |= {"envelope_sf": envelope, "coverage_sf": coverage, "footprint_sf": fp, "height_ft": o["height_ft"],
+                "stories": stories, "zoning_max_sf": zoning_max, "size_sf": size}
+        ppsf = cb["price_per_sf"]
+        if size is None or ppsf is None or size <= 0:
+            notes.append("no buildable house size" if ppsf is not None else
+                         "no comps within the widest radius" if "duplex_discount" not in blanks else "no plex price")
+            return row | {"notes": "; ".join(dict.fromkeys(notes)) or None, "blank_inputs": ", ".join(blanks) or None}
+        revenue = buildings * ppsf * size
+        build = buildings * costs["build_cost_per_sf"] * size
+        soft = build * costs["soft_cost_pct"] / 100
+        profit = revenue * costs["target_profit_pct"] / 100
+        unit_price, house_fp, dev = ppsf * size / upb, size / stories, 0.0
+        margin = revenue - build - soft - profit
+        row |= {"build_cost": build, "soft_cost": soft, "profit": profit}
+
+    months, factor = None, 1.0
+    if o["project"]:
+        per_month, rate = proj.get("absorption_homes_per_month"), proj.get("annual_discount_rate_pct")
+        if per_month is None:
+            blanks.append("absorption_homes_per_month")
+        if rate is None:
+            blanks.append("annual_discount_rate_pct")
+        if per_month is not None and rate is not None:
+            months, factor = discount_factor(units, per_month, rate)
+    discount = margin * (1 - factor)
+
     adu = item("adu_premium", 1 if o["adu"] else 0, econ.get("adu_premium"))
+    retained = 0.0
+    if o["keep_house"]:
+        retained = (p.get("building_value") or 0) * (p.get("_ratio") or 1)
+        notes.append("kept house counted at assessed building value x sales ratio")
+    heated = p.get("existing_heated_sf") or 0
+    removes = o["removes_building"] and not p.get("vacant")
+    if removes and not heated:
+        notes.append("existing building with no CAMA heated sf: demolition not costed")
+    demo = item("demo_cost_per_sf", heated if removes else 0, costs.get("demo_cost_per_sf"))
     lots = o["creates_lots"] or sw.get("road_and_stormwater_on_lot_as_is")
     sewer_ft = p.get("sewer_distance_ft") if basis == "known_distance" and sewer == "public" else 0
     road_ft = (p.get("frontage_ft") or 0) if lots else 0
     slope_acres = p.get("slope_15_25_acres") or 0
-    fp_units = floodplain_units(o, p, size / stories)      # the house's own footprint, not the zoning maximum
+    fp_units = floodplain_units(o | {"units": units}, p, house_fp)
     site = {
         "sewer_cost": item("sewer_per_ft", sewer_ft, sw.get("sewer_per_ft")),
         "road_cost": item("road_per_ft", road_ft, sw.get("road_per_ft")),
-        "stormwater_cost": item("stormwater_per_unit", o["units"] if lots else 0, sw.get("stormwater_per_unit")),
+        "stormwater_cost": item("stormwater_per_unit", units if lots else 0, sw.get("stormwater_per_unit")),
         "slope_cost": item("slope_per_acre", slope_acres, sw.get("slope_per_acre")),
         "floodplain_cost": item("floodplain_per_unit", fp_units, sw.get("floodplain_per_unit")),
         "crossing_cost": item("creek_crossing", 1 if o["kind"] == "if_crossed" else 0, sw.get("creek_crossing")),
     }
     cap_price = (econ.get("obligations") or {}).get("affordable_max_price")
-    oblig = item("affordable_max_price", o["affordable_units"],
-                 None if cap_price is None else max(unit_price - cap_price, 0))
+    oblig = item("affordable_max_price", affordable, None if cap_price is None else max(unit_price - cap_price, 0))
     site_work = sum(v for v in site.values() if v is not None)
-    rlv = revenue - build - soft - profit + (adu or 0) - site_work - (oblig or 0)
+    rlv = margin - discount - (dev or 0) + (adu or 0) + retained - (demo or 0) - site_work - (oblig or 0)
     return row | site | {
-        "unit_price": unit_price, "revenue": revenue, "build_cost": build, "soft_cost": soft, "profit": profit,
-        "adu_premium": adu, "sewer_ft": sewer_ft, "road_ft": road_ft, "slope_acres": slope_acres,
-        "floodplain_units": fp_units, "site_work": site_work, "obligation_cost": oblig, "rlv": rlv,
-        "blank_inputs": ", ".join(blanks) or None, "notes": "; ".join(dict.fromkeys(notes)) or None}
+        "unit_price": unit_price, "revenue": revenue, "absorption_months": months, "discount_factor": factor,
+        "discount_cost": discount, "adu_premium": adu, "retained_value": retained, "demolition_cost": demo,
+        "sewer_ft": sewer_ft, "road_ft": road_ft, "slope_acres": slope_acres, "floodplain_units": fp_units,
+        "site_work": site_work, "obligation_cost": oblig, "rlv": rlv,
+        "blank_inputs": ", ".join(dict.fromkeys(blanks)) or None, "notes": "; ".join(dict.fromkeys(notes)) or None}
 
 
 # ---------------------------------------------------------------- 5. per parcel
@@ -496,21 +595,33 @@ def best(rows: list[dict], kind: str) -> dict | None:
     return max(cands, key=lambda r: r["rlv"]) if cands else None
 
 
-def excluded_reason(p: dict, score_cfg: dict) -> str | None:
-    if p.get("owner_type") in score_cfg["exclude_owner_types"]:
-        return f"owner type {p['owner_type']}"
+def exclusion(p: dict, score_cfg: dict) -> tuple[str | None, str | None]:
+    """(category, reason) for parcels never scored, else (None, None)."""
+    for cat, owner in score_cfg["exclude_owner_types"].items():
+        if p.get("owner_type") == owner:
+            return cat, f"owner type {owner}"
     lu = (p.get("land_use") or "").upper()
-    if any(w in lu for w in score_cfg["exclude_land_use_words"]):
-        return f"land use {lu}"
+    for cat, patterns in score_cfg["exclude_land_uses"].items():
+        if any(fnmatch.fnmatchcase(lu, pat) for pat in patterns):
+            return cat, f"land use {lu}"
     if score_cfg.get("exclude_access_via_common_area") and p.get("access_via_common_area"):
-        return "access via common area"
-    return None
+        return "hoa_common_area", "access via common area"
+    return None, None
+
+
+def adds_units(o: dict | None, p: dict) -> bool:
+    """Does the option add dwellings or lots? (an existing building counts as one unit)"""
+    return bool(o) and (o["option"].startswith(("split_", "sub_", "townhome", "if_crossed_"))
+                        or o["units"] > (0 if p.get("vacant") else 1))
 
 
 def score_parcel(p: dict, comps: dict, rules: dict, econ: dict, scoring_cfg: dict,
                  ratios: pd.DataFrame) -> tuple[dict, list[dict]]:
     """(parcel_rlv row, parcel_rlv_options rows) for one parcel."""
     basis = sewer_basis(p)
+    land_class = "vacant" if p.get("vacant") else "improved"
+    ratio, group, n = pick_ratio(ratios, p.get("municipality"), land_class)
+    p = p | {"_ratio": ratio}
     public = [value_option(o, p, comps, econ, basis, "public") for o in yield_options(p, rules, scoring_cfg)]
     septic = [value_option(o, p, comps, econ, basis, "septic")
               for o in septic_options(p, rules, scoring_cfg, econ["sewer"]["septic_min_lot_sf"])] \
@@ -520,11 +631,9 @@ def score_parcel(p: dict, comps: dict, rules: dict, econ: dict, scoring_cfg: dic
     if_sewer = best(public, "by_right") if basis == "none_outside" else None
     rez, crossed = best(public, "rezoning"), best(public, "if_crossed")
 
-    land_class = "vacant" if p.get("vacant") else "improved"
-    ratio, group, n = pick_ratio(ratios, p.get("municipality"), land_class)
     assessed = p.get("total_value")
     price = assessed * ratio if assessed is not None and ratio is not None else None
-    reason = excluded_reason(p, econ["score"])
+    category, reason = exclusion(p, econ["score"])
     score = b["rlv"] - price if b and price is not None and not reason else None
     low_conf = basis in ("proxy_served", "assumed_in_town")
     no_value = None
@@ -533,7 +642,9 @@ def score_parcel(p: dict, comps: dict, rules: dict, econ: dict, scoring_cfg: dic
                     else "no option with comps and a buildable size" if scored else "no by-right option")
     row = {
         "pin": p["pin"], "site_address": p.get("site_address"), "jurisdiction": p["jurisdiction"],
-        "zone_code": p.get("zone_code"), "municipality": p.get("municipality"), "area_sf": p.get("area_sf"),
+        "zone_code": p.get("zone_code"), "municipality": p.get("municipality"), "land_use": p.get("land_use"),
+        "owner_type": p.get("owner_type"), "area_sf": p.get("area_sf"), "building_value": p.get("building_value"),
+        "existing_heated_sf": p.get("existing_heated_sf"),
         "sewer_basis": basis, "sewer_status": p.get("sewer_status"), "sewer_confidence": p.get("sewer_confidence"),
         "sewer_source": p.get("sewer_source"), "scored_on": "septic" if basis == "none_outside" else "public",
         "best_option": b and b["option"], "best_product": b and b["product"], "best_units": b and b["units"],
@@ -543,11 +654,12 @@ def score_parcel(p: dict, comps: dict, rules: dict, econ: dict, scoring_cfg: dic
         "if_crossed_rlv": crossed and crossed["rlv"],
         "asking_price": None, "assessed_value": assessed, "land_class": land_class, "ratio": ratio,
         "ratio_group": group, "ratio_sales": n, "price": price, "price_basis": "assessed_x_ratio",
-        "score": score, "excluded_reason": reason,
+        "score": score, "exclusion_category": category, "excluded_reason": reason,
+        "redevelopment_watch": category in econ["score"]["redevelopment_watch"],
         "verify_sewer": basis == "assumed_in_town", "sewer_low_confidence": low_conf,
-        "sewer_unverified_high_score": bool(low_conf and score is not None
-                                            and score > econ["sewer"]["low_confidence_score_cap"]),
-        "thin_comps": bool(b and b["thin_comps"]), "plex_pooled": bool(b and b["product"] == "plex"),
+        "sewer_assumed_new_units": low_conf and adds_units(b, p),
+        "thin_comps": bool(b and b["thin_comps"]), "comp_proxy": bool(b and b["comp_proxy"]),
+        "over_project_cap": bool(b and b["over_project_cap"]),
         "rlv_incomplete": bool(b and b["blank_inputs"]), "blank_inputs": b and b["blank_inputs"],
         "verify_acreage": bool(p.get("verify_acreage")),
         "septic_soils_very_limited": basis == "none_outside" and p.get("septic_dominant_rating") == "Very limited",
@@ -559,9 +671,11 @@ def score_parcel(p: dict, comps: dict, rules: dict, econ: dict, scoring_cfg: dic
 INPUT_SQL = """
 SELECT y.*, f.site_address, f.municipality, f.in_municipal_limit, f.vacant, f.sewer_status, f.sewer_confidence,
        f.sewer_source, f.sewer_distance_ft, f.slope_15_25_acres, f.floodplain_flag_acres, f.total_value,
-       f.lot_depth_ft, f.owner_type, f.land_use, f.access_via_common_area, c.septic_dominant_rating
+       f.building_value, f.lot_depth_ft, f.owner_type, f.land_use, f.access_via_common_area,
+       c.septic_dominant_rating, h.existing_heated_sf
 FROM {s}.parcel_yield y JOIN {s}.parcel_features f USING (pin)
 LEFT JOIN {s}.parcel_constraints c USING (pin)
+LEFT JOIN LATERAL (SELECT sum(heated_sf) AS existing_heated_sf FROM {s}.parcel_cama a WHERE a.pin = y.pin) h ON true
 WHERE y.yield_basis = 'by_right' AND y.pin BETWEEN :lo AND :hi
 ORDER BY y.pin
 """
@@ -580,7 +694,7 @@ def comps_by_pin(df: pd.DataFrame) -> dict[str, dict]:
 
 
 def run_rlv(engine: Engine, econ: dict, scoring_cfg: dict, rules: dict, ratios: pd.DataFrame, run_date: date,
-            s: str = "public", chunk: int = 20_000) -> tuple[pd.DataFrame, dict]:
+            s: str = "public", chunk: int = 5_000) -> tuple[pd.DataFrame, dict]:
     """Value every option of every by-right parcel and store both tables. Returns (parcel_rlv, changes).
     Parcels are read `chunk` at a time by pin range: the whole input does not fit in this PC's memory."""
     with engine.connect() as conn:
@@ -601,6 +715,7 @@ def run_rlv(engine: Engine, econ: dict, scoring_cfg: dict, rules: dict, ratios: 
             parcels.append(_frame(rows, PARCEL_COLS))
             _store(conn, _frame(options, OPTION_COLS), f"{s}.parcel_rlv_options", ["pin", "option", "sewer"],
                    run_date, append=i > 0, finish=False)
+            del inputs, comps, rows, options
         opt_changes = apply_versioned(conn, f"{s}.parcel_rlv_options", ["pin", "option", "sewer"], run_date)
         df = pd.concat(parcels, ignore_index=True)
         changes = {"parcel_rlv_options": opt_changes,
@@ -611,46 +726,74 @@ def run_rlv(engine: Engine, econ: dict, scoring_cfg: dict, rules: dict, ratios: 
 # ---------------------------------------------------------------- printing
 
 def _money(x) -> str:
-    return "blank" if x is None or pd.isna(x) else f"${x:,.0f}"
+    return "blank" if x is None or pd.isna(x) else f"-${-x:,.0f}" if x < 0 else f"${x:,.0f}"
+
+
+def _n(x, fmt: str = ",.0f") -> str:
+    return "-" if x is None or pd.isna(x) else format(x, fmt)
+
+
+FLAG_COLS = ["verify_sewer", "sewer_low_confidence", "sewer_assumed_new_units", "thin_comps", "comp_proxy",
+             "over_project_cap", "rlv_incomplete", "verify_acreage", "septic_soils_very_limited"]
 
 
 def explain(p: pd.Series, o: pd.Series | None, econ: dict) -> list[str]:
     """Every input behind a parcel's score, as printable lines."""
-    costs, sw = econ["costs"], econ["site_work"]
-    flags = [c for c in ("verify_sewer", "sewer_low_confidence", "sewer_unverified_high_score", "thin_comps",
-                         "plex_pooled", "rlv_incomplete", "verify_acreage", "septic_soils_very_limited") if p[c]]
+    costs, sw, sub, proj = econ["costs"], econ["site_work"], econ["subdivision"], econ["project"]
     lines = [f"{p['pin']}  {p['site_address'] or '(no address)'}  {p['jurisdiction']} {p['zone_code']}  "
-             f"{p['area_sf'] / SQFT_PER_ACRE:,.2f} ac  [parcel_rlv, parcel_yield, parcel_features]",
+             f"{p['area_sf'] / SQFT_PER_ACRE:,.2f} ac  {p['land_use']}  [parcel_rlv, parcel_yield, parcel_features]",
              f"  sewer: {p['sewer_basis']} (status {p['sewer_status']}, confidence {p['sewer_confidence']}, "
-             f"source {p['sewer_source']}); scored on {p['scored_on']} sewer"]
+             f"source {p['sewer_source']}); scored on {p['scored_on']} sewer; existing building "
+             f"{_money(p['building_value'])}, {_n(p['existing_heated_sf'])} heated sf (CAMA)"]
+    if p["excluded_reason"] is not None and pd.notna(p["excluded_reason"]):
+        lines.append(f"  NOT SCORED: {p['exclusion_category']} ({p['excluded_reason']})"
+                     + ("; on the redevelopment watch list" if p["redevelopment_watch"] else ""))
     if o is None:
         lines.append(f"  no value: {p['no_value_reason']}")
         return lines
-    b = o["buildings"]
+    cap = f" (yield {o['yield_units']}, over the project cap)" if o["over_project_cap"] else ""
+    lines.append(f"  best use: {o['option']} ({o['kind']}, {o['model']} model), {o['units']} {o['product']} units{cap}, "
+                 f"{o['affordable_units']} affordable  [parcel_rlv_options {p['pin']} / {o['option']} / {o['sewer']}]")
+    comp = (f"    comps: {o['comp_count']} {o['comp_product']} sales within {_n(o['comp_radius_mi'], 'g')} mi"
+            f"{' (THIN)' if o['thin_comps'] else ''}"
+            f"{' x duplex_discount ' + str(econ['plex']['duplex_discount']) + ' (PROXY)' if o['comp_proxy'] else ''}: "
+            f"median ${_n(o['price_per_sf'])}/sf, {_n(o['comp_median_sf'])} sf, sale {_money(o['comp_median_price'])}"
+            f"  [comp_sales; comps_for('{p['pin']}', '{o['comp_product']}')]")
+    if o["model"] == "lot":
+        lines += [comp,
+                  f"    finished lot price {sub['lot_to_home_ratio']} x median new home {_money(o['comp_median_price'])} "
+                  f"= {_money(o['lot_price'])}",
+                  f"    lot sales  {o['units']} x {_money(o['lot_price'])} = {_money(o['revenue'])}",
+                  f"    development {o['units']} x {_money(sub.get('development_cost_per_lot'))} = "
+                  f"-{_money(o['development_cost'])}"]
+    else:
+        b = o["buildings"]
+        lines += [f"    lot {_n(o['lot_sf'])} sf, {_n(o['lot_width_ft'], ',.1f')} x {_n(o['lot_depth_ft'], ',.1f')} ft; "
+                  f"envelope {_n(o['envelope_sf'])} sf, coverage limit {_n(o['coverage_sf'])} sf -> footprint "
+                  f"{_n(o['footprint_sf'])} sf x {o['stories']} floors (height {_n(o['height_ft'], 'g')} ft) = zoning max "
+                  f"{_n(o['zoning_max_sf'])} sf",
+                  comp,
+                  f"    house size {_n(o['size_sf'])} sf per building (smaller of comps' median and zoning max) "
+                  f"-> unit price {_money(o['unit_price'])}",
+                  f"    revenue    {b:g} x {_n(o['size_sf'])} sf x ${_n(o['price_per_sf'])} = {_money(o['revenue'])}",
+                  f"    build cost {b:g} x {_n(o['size_sf'])} sf x ${costs['build_cost_per_sf']:,} = -{_money(o['build_cost'])}",
+                  f"    soft cost  {costs['soft_cost_pct']}% of build = -{_money(o['soft_cost'])}",
+                  f"    profit     {costs['target_profit_pct']}% of revenue = -{_money(o['profit'])}"]
+    if pd.notna(o["absorption_months"]):
+        lines.append(f"    absorption {o['units']} / {proj['absorption_homes_per_month']} a month = "
+                     f"{o['absorption_months']} months at {proj['annual_discount_rate_pct']}%/yr: factor "
+                     f"{o['discount_factor']:.4f} -> discount -{_money(o['discount_cost'])}")
     lines += [
-        f"  best use: {o['option']} ({o['kind']}), {o['units']} {o['product']} units in {b:g} building(s), "
-        f"{o['affordable_units']} affordable  [parcel_rlv_options {p['pin']} / {o['option']} / {o['sewer']}]",
-        f"    lot {o['lot_sf'] or 0:,.0f} sf, {o['lot_width_ft'] or 0:,.1f} x {o['lot_depth_ft'] or 0:,.1f} ft; "
-        f"envelope {o['envelope_sf'] or 0:,.0f} sf, coverage limit {o['coverage_sf'] or 0:,.0f} sf -> footprint "
-        f"{o['footprint_sf'] or 0:,.0f} sf x {o['stories']} floors (height {o['height_ft']} ft) = zoning max "
-        f"{o['zoning_max_sf'] or 0:,.0f} sf",
-        f"    comps: {o['comp_count']} {o['product']} sales within {o['comp_radius_mi']:g} mi"
-        f"{' (THIN)' if o['thin_comps'] else ''}: median ${o['price_per_sf']:,.0f}/sf; market cap "
-        f"{o['market_cap_sf']:,.0f} sf  [comp_sales; comps_for('{p['pin']}', '{o['product']}')]",
-        f"    house size {o['size_sf']:,.0f} sf per building -> unit price {_money(o['unit_price'])}",
-        f"    revenue    {b:g} x {o['size_sf']:,.0f} sf x ${o['price_per_sf']:,.0f} = {_money(o['revenue'])}",
-        f"    build cost {b:g} x {o['size_sf']:,.0f} sf x ${costs['build_cost_per_sf']:,.0f} = -{_money(o['build_cost'])}",
-        f"    soft cost  {costs['soft_cost_pct']}% of build = -{_money(o['soft_cost'])}",
-        f"    profit     {costs['target_profit_pct']}% of revenue = -{_money(o['profit'])}",
-        f"    ADU premium +{_money(o['adu_premium'])}",
-        f"    site work  -{_money(o['site_work'])}: sewer {o['sewer_ft'] or 0:,.0f} ft = {_money(o['sewer_cost'])}; "
-        f"road {o['road_ft'] or 0:,.0f} ft x {_money(sw.get('road_per_ft'))} = {_money(o['road_cost'])}; "
+        f"    ADU premium +{_money(o['adu_premium'])}; kept house +{_money(o['retained_value'])}; demolition "
+        f"{_n(o['existing_heated_sf'])} sf x {_money(costs.get('demo_cost_per_sf'))} = -{_money(o['demolition_cost'])}",
+        f"    site work  -{_money(o['site_work'])}: sewer {_n(o['sewer_ft'])} ft = {_money(o['sewer_cost'])}; "
+        f"road {_n(o['road_ft'])} ft x {_money(sw.get('road_per_ft'))} = {_money(o['road_cost'])}; "
         f"stormwater {o['units']} x {_money(sw.get('stormwater_per_unit'))} = {_money(o['stormwater_cost'])}; "
-        f"slope {o['slope_acres'] or 0:,.2f} ac x {_money(sw.get('slope_per_acre'))} = {_money(o['slope_cost'])}; "
+        f"slope {_n(o['slope_acres'], ',.2f')} ac x {_money(sw.get('slope_per_acre'))} = {_money(o['slope_cost'])}; "
         f"floodplain {o['floodplain_units']} units = {_money(o['floodplain_cost'])}; "
         f"creek crossing {_money(o['crossing_cost'])}",
         f"    obligations {o['affordable_units']} affordable units = -{_money(o['obligation_cost'])}",
-        f"    RLV = {_money(o['rlv'])}" + (f"  (upper bound: blank {o['blank_inputs']})" if o["blank_inputs"] else ""),
+        f"    RLV = {_money(o['rlv'])}" + (f"  (upper bound: blank {o['blank_inputs']})" if pd.notna(o["blank_inputs"]) else ""),
         f"  price: assessed {_money(p['assessed_value'])} x ratio {p['ratio']:.3f} ({p['ratio_group']}, "
         f"{p['ratio_sales']:,} sales) = {_money(p['price'])}  (no listing)  [parcel_features.total_value, sales_ratios]",
         f"  score = RLV - price = {_money(p['score'])}",
@@ -661,6 +804,7 @@ def explain(p: pd.Series, o: pd.Series | None, econ: dict) -> list[str]:
         lines.append("  also (not the best use): " + "; ".join(also))
     if pd.notna(o["notes"]):
         lines.append(f"  notes: {o['notes']}")
+    flags = [c for c in FLAG_COLS if p[c]]
     if flags:
         lines.append("  flags: " + ", ".join(flags))
     return lines
@@ -688,12 +832,12 @@ def summary(df: pd.DataFrame, changes: dict) -> str:
     valued = df[df["best_rlv"].notna()]
     lines = [f"Residual land value: {len(df):,} parcels with by-right yield, {len(valued):,} valued",
              "  sewer basis: " + ", ".join(f"{k} {v:,}" for k, v in df["sewer_basis"].value_counts().items()),
-             "  best use: " + ", ".join(f"{k} {v:,}" for k, v in valued["best_option"].value_counts().head(8).items()),
-             f"  scored {int(df['score'].notna().sum()):,}; excluded {int(df['excluded_reason'].notna().sum()):,}; "
-             f"RLV > 0 {int((valued['best_rlv'] > 0).sum()):,}; score > 0 {int((df['score'] > 0).sum()):,}",
-             "  flags: " + ", ".join(f"{c} {int(df[c].sum()):,}" for c in
-                                     ("verify_sewer", "sewer_unverified_high_score", "thin_comps", "plex_pooled",
-                                      "rlv_incomplete", "septic_soils_very_limited")),
+             "  best use: " + ", ".join(f"{k} {v:,}" for k, v in valued["best_option"].value_counts().head(10).items()),
+             f"  scored {int(df['score'].notna().sum()):,}; RLV > 0 {int((valued['best_rlv'] > 0).sum()):,}; "
+             f"score > 0 {int((df['score'] > 0).sum()):,}",
+             "  not scored: " + ", ".join(f"{k} {v:,}" for k, v in df["exclusion_category"].value_counts().items())
+             + f"; redevelopment watch {int(df['redevelopment_watch'].sum()):,}",
+             "  flags: " + ", ".join(f"{c} {int(df[c].sum()):,}" for c in FLAG_COLS),
              f"  changes: {changes}"]
     return "\n".join(lines)
 

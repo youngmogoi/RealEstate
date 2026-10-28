@@ -1,18 +1,26 @@
 # Residual land value (Phase 2.3, scoring/rlv.py, `make rlv`). Created 2026-10-28.
 # Values marked (draft) await your confirmation. Money is in dollars.
 #
-#   RLV per option = buildings x (sale price - build cost - soft costs - target profit)
-#                    + ADU premium - site work - obligations
+# Two models (decided 2026-10-28):
+#   House model (lot as is, lot splits, townhomes):
+#     RLV = buildings x (sale price - build cost - soft costs - target profit) - absorption discount
+#           + ADU premium + retained house - demolition - site work - obligations
+#   Lot model (subdivisions: standard, conservation, compact, mixed income, and their if_crossed):
+#     RLV = lots x finished lot price - absorption discount - lots x development cost per lot
+#           - demolition - site work - obligations
+# Absorption discount and the project cap apply to subdivisions and townhomes ("projects").
 #
 # Blank (null) values: the three core costs are required; while any is blank, `make rlv` builds
-# the comps and sales ratios and then stops without computing RLV. Every other blank is left OUT
-# of the RLV it would apply to (never treated as 0 silently): that RLV is then an upper bound,
-# flagged rlv_incomplete, with the missing names in blank_inputs.
+# the comps and sales ratios and then stops without computing RLV. lot_to_home_ratio and
+# duplex_discount set a price: while blank, the options that need them get no RLV. Every other
+# blank is left OUT of the RLV it would apply to (never treated as 0 silently): that RLV is then
+# an upper bound, flagged rlv_incomplete, with the missing names in blank_inputs.
 
 costs:
   build_cost_per_sf: null        # $ per heated sf, hard construction cost (you fill in)
-  soft_cost_pct: null            # % of build cost: design, permits, fees, financing, closing (you fill in)
-  target_profit_pct: null        # % of the sale price (you fill in)
+  soft_cost_pct: null            # % of build cost: design, permits, fees, financing, closing (confirmed 2026-10-28)
+  target_profit_pct: null        # % of the sale price (confirmed 2026-10-28)
+  demo_cost_per_sf: null         # $ per existing heated sf (CAMA), on every option that removes a building
 
 site_work:
   sewer_per_ft: null             # $ per ft of sewer extension; used only where a sewer distance is known (none yet)
@@ -21,13 +29,37 @@ site_work:
   slope_per_acre: null           # $ per acre of 15-25% slope on the parcel; every option
   floodplain_per_unit: null      # $ per unit whose building falls in the 1% floodplain flag
   creek_crossing: null           # $ per parcel, added to the if_crossed options only (CLAUDE.md, buildable pieces)
-  # Which options the per-frontage and per-unit items apply to. "lot_as_is" = building on the
-  # existing lot (cur_*); everything else creates lots or townhome units.
-  road_and_stormwater_on_lot_as_is: false      # (draft)
+  # Road and stormwater only on options that create lots or townhomes, not the lot as it is
+  # (confirmed 2026-10-28).
+  road_and_stormwater_on_lot_as_is: false
+
+subdivision:
+  # Finished lot price = this share of the median nearby new-home sale price (sfh comps).
+  lot_to_home_ratio: null        # e.g. 0.25 (you fill in)
+  # Per lot: internal streets, utilities, grading, entitlement. The site work items above (road
+  # frontage, stormwater, slope, floodplain, crossing) are added separately; leave them out of this.
+  development_cost_per_lot: null
+
+project:
+  # Subdivisions and townhomes sell over time: months = ceil(units / absorption); sales are spread
+  # evenly and each month's revenue is discounted at the annual rate. House model: the margin is
+  # discounted (costs come with each sale); lot model: lot revenue is (development is up front).
+  absorption_homes_per_month: null
+  annual_discount_rate_pct: null
+  # Lots or units valued per project; larger yields are valued at the cap and flagged
+  # over_project_cap. Blank = no cap.
+  max_lots_per_project: null
+
+plex:
+  # Duplex, triplex and quadraplex units are priced from nearby townhome comps x this, flagged
+  # comp_proxy, until the plex pool has min_real_sales within the widest radius (11 countywide in
+  # Oct 2026). A unit is then the townhome comps' median heated sf; a building holds its units.
+  duplex_discount: null          # e.g. 0.90 (you fill in)
+  min_real_sales: 20
 
 obligations:
   # Affordable units (quadraplex: 1 per building; voluntary mixed income: 50% of bonus lots, min 2)
-  # sell at no more than this. Obligation = affordable units x (market unit price - this), if > 0.
+  # sell at no more than this. Obligation = affordable units x (market home price - this), if > 0.
   affordable_max_price: null     # $ per unit at 80% AMI (you get this from Charlotte Housing)
   affordable_max_price_source: null
   affordable_max_price_year: null
@@ -48,22 +80,18 @@ comps:
   min_price_per_sf: 100
   max_price_per_sf: 2000
   # CAMA building type (largest building) for each comp product. Duplex, triplex and quadraplex
-  # share one pool, "plex": CAMA can't tell them apart (resunits is 0 or blank on most) and there
-  # were only 13 new ones in 24 months. A plex best use is flagged plex_pooled (and thin_comps
-  # when, as almost everywhere, fewer than min_comps lie within the widest radius).
+  # share one pool, "plex": CAMA can't tell them apart (resunits is 0 or blank on most).
   products:
     sfh: ["SINGLE FAMILY RESIDENTIAL"]
     townhome: ["TOWNHOUSE"]
     plex: ["DUPLEX-TRIPLEX-QUADRAPLEX"]
 
 house_size:
-  # Largest building zoning allows: footprint = the smaller of the setback envelope and max
-  # building coverage x lot area; floors = max height / story_height_ft, at most max_stories.
-  story_height_ft: 12            # (draft)
-  max_stories: 3                 # (draft)
-  # What the market supports: this percentile of the comps' heated sf (same comps as the price).
-  # Plex comps are whole buildings, so the cap is per building.
-  market_cap_percentile: 0.90    # (draft)
+  # House size = the median heated sf of the nearby comps for that product (decided 2026-10-28),
+  # capped by what zoning allows: footprint = the smaller of the setback envelope and max building
+  # coverage x lot area, times floors = max height / story_height_ft, at most max_stories.
+  story_height_ft: 12            # (confirmed 2026-10-28)
+  max_stories: 3                 # (confirmed 2026-10-28)
 
 sewer:
   # CLAUDE.md "Unknown sewer" (decided 2026-10-27). Cases, in order:
@@ -72,11 +100,9 @@ sewer:
   #   unknown, in town      -> assumed served, flag verify_sewer
   #   unknown, outside town -> scored without public sewer (septic: single-family on large lots
   #                            only), with an "if sewer available" RLV reported beside it
-  # Septic lot size. (draft: confirm with Mecklenburg County Environmental Health)
-  septic_min_lot_sf: 43560
-  # A parcel whose sewer is only assumed (low confidence or unknown in town) and whose score
-  # exceeds this gets the flag sewer_unverified_high_score. (draft)
-  low_confidence_score_cap: 100000
+  # sewer_assumed_new_units: the best use adds units or lots AND sewer is only assumed (decided
+  # 2026-10-28). The digest shows it for shortlisted parcels only.
+  septic_min_lot_sf: 43560       # placeholder (confirmed as such 2026-10-28; check with County Environmental Health)
 
 price:
   # Price = asking price if listed (no listings source yet), else assessed value x sales ratio.
@@ -91,9 +117,25 @@ price:
   min_sales: 20
 
 score:
-  # Never scored as opportunities (CLAUDE.md, Phase 2.4): RLV is still computed and stored, the
-  # score is left blank with excluded_reason.
-  exclude_owner_types: [government, church_nonprofit]
-  exclude_land_use_words: ["COMMON", "RIGHT OF WAY", "UTILITY", "AIR RIGHTS", "CEMETERY"]
-  exclude_access_via_common_area: true
+  # Never scored or ranked (decided 2026-10-28; CLAUDE.md Phase 2.4): RLV is still computed and
+  # stored, the score is left blank, excluded_reason names the category.
+  exclude_owner_types:
+    government: government
+    church_nonprofit: church_nonprofit
+  exclude_access_via_common_area: true       # HOA land reached only through common area
+  # County land use (parcel_features.land_use), as shell patterns: * = anything.
+  exclude_land_uses:
+    golf_course: ["GOLF COURSE*"]            # not "SINGLE FAMILY RESIDENTIAL - GOLF" (homes on courses)
+    club: ["CLUB, LODGES, UNION HALL, SWIM CLUB", "*COUNTRY CLUB*"]
+    private_school: ["SCHOOL,COLLEGE, PRIVATE"]
+    apartments: ["MULTI FAMILY", "MULTI FAMILY GARDEN", "MULTI FAMILY HIGH RISE", "MULTI FAMILY TOWNHOUSE",
+                 "MULTI FAMILTY AFFORDABLE HOUSING"]   # sic; duplex/triplex stays in
+    condominium: ["CONDOMINIUM", "CONDOMINIUM HIGH RISE"]
+    cemetery: ["*CEMETERY*"]
+    hoa_common_area: ["*COMMON*"]
+    government: ["SCHOOL - PUBLIC", "RIGHT OF WAY", "AIR RIGHTS*"]
+    utility: ["UTILITY*"]
+    church_nonprofit: ["CHURCH"]
+  # Excluded categories kept on a separate list (parcel_rlv.redevelopment_watch)
+  redevelopment_watch: [golf_course, club]
   top_n: 20

@@ -1,7 +1,7 @@
-pin,site_address,municipality,in_municipal_limit,vacant,sewer_status,sewer_confidence,sewer_source,sewer_distance_ft,slope_15_25_acres,floodplain_flag_acres,total_value,owner_type,land_use,access_via_common_area,septic_dominant_rating
-02522236,9630 NETTLE DR CHARLOTTE NC,CHARLOTTE,t,f,served,low,plat_first_home,,0,0,289200,individual,SINGLE FAMILY RESIDENTIAL,f,
-02708315,12607 CARDINAL POINT RD CHARLOTTE NC,CHARLOTTE,t,f,served,low,plat_first_home,,0.05180160302063322,0,328200,individual,SINGLE FAMILY RESIDENTIAL,f,
-02763166,5128 HUCKS RD CHARLOTTE NC,CHARLOTTE,t,f,served,low,plat_first_home,,0,0,363000,individual,SINGLE FAMILY RESIDENTIAL - ACREAGE,f,
-02918135,8435 PORTSMOUTH DR UNINC NC,MECKLENBURG COUNTY-UNINCORPORATED,f,f,served,low,plat_first_home,,0.04935606452059155,0,1112334,llc_corporate,MULTI FAMILY,f,
-03508109,6124 OLD PLANK RD CHARLOTTE NC,CHARLOTTE,t,f,unknown,,,,9.287451939098024e-05,0,238800,individual,SINGLE FAMILY RESIDENTIAL - ACREAGE,f,Somewhat limited
-21311502,8625 SARDIS RD CHARLOTTE NC,CHARLOTTE,t,t,served,low,plat_first_home,,1.1774668879328578,0.2589570554061201,424400,llc_corporate,SINGLE FAMILY RESIDENTIAL,f,
+pin,site_address,municipality,in_municipal_limit,vacant,sewer_status,sewer_confidence,sewer_source,sewer_distance_ft,slope_15_25_acres,floodplain_flag_acres,total_value,building_value,owner_type,land_use,access_via_common_area,septic_dominant_rating,existing_heated_sf
+02522236,9630 NETTLE DR CHARLOTTE NC,CHARLOTTE,t,f,served,low,plat_first_home,,0,0,289200,214200,individual,SINGLE FAMILY RESIDENTIAL,f,,1570
+02708315,12607 CARDINAL POINT RD CHARLOTTE NC,CHARLOTTE,t,f,served,low,plat_first_home,,0.05180160302063322,0,328200,268200,individual,SINGLE FAMILY RESIDENTIAL,f,,1944
+02763166,5128 HUCKS RD CHARLOTTE NC,CHARLOTTE,t,f,served,low,plat_first_home,,0,0,363000,309600,individual,SINGLE FAMILY RESIDENTIAL - ACREAGE,f,,2228
+02918135,8435 PORTSMOUTH DR UNINC NC,MECKLENBURG COUNTY-UNINCORPORATED,f,f,served,low,plat_first_home,,0.04935606452059155,0,1112334,727700,llc_corporate,MULTI FAMILY,f,,5745
+03508109,6124 OLD PLANK RD CHARLOTTE NC,CHARLOTTE,t,f,unknown,,,,9.287451939098024e-05,0,238800,165300,individual,SINGLE FAMILY RESIDENTIAL - ACREAGE,f,Somewhat limited,1378
+21311502,8625 SARDIS RD CHARLOTTE NC,CHARLOTTE,t,t,served,low,plat_first_home,,1.1774668879328578,0.2589570554061201,424400,0,llc_corporate,SINGLE FAMILY RESIDENTIAL,f,,0
