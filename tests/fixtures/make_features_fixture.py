@@ -21,6 +21,8 @@ OUT = Path(__file__).with_name("meck_features")
 PINS = {
     "08920128": "443 Dawn Cir: mid-block lot, one street",
     "03141608": "2137 Tom Sadler Rd: mid-block lot, one street",
+    "01101413": "1521 Yellow Springs Dr: new lot fronting only a street the city still marks Proposed",
+    "00101429": "14017 NC 73 Hwy: lot line 50 ft from a major road's centerline (163 ft of frontage)",
 }
 # Added from the full build: a corner lot, a through lot, a flag lot, and a landlocked parcel
 EXTRA_SQL = {

@@ -1,3 +1,5 @@
+# Pinned so the database volume (realestate_pgdata) is found wherever this folder lives.
+name: realestate
 services:
   db:
     image: postgis/postgis:16-3.4

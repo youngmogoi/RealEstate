@@ -16,7 +16,8 @@ Where each column comes from:
   layer is published; this is how it is inferred).
 - parcel_utilities: sewer_status, sewer_confidence, sewer_source, sewer_distance_ft,
   water_status, water_distance_ft, planned_project_nearby.
-- streets (city CountyData/Streets): frontage_ft, private_frontage_ft, street_frontages,
+- streets (city CountyData/Streets): frontage_ft, private_frontage_ft, proposed_frontage_ft,
+  frontage_proposed_only, access_via_common_area, street_frontages,
   corner_lot, through_lot, flag_lot, landlocked. Frontage counts only lot-line segments
   roughly parallel to a usable street within buffer_ft of its centerline.
 - parcels geometry: lot_width_ft, lot_depth_ft (sides of the minimum rotated rectangle).
@@ -46,24 +47,31 @@ def words_regex(words: list[str]) -> str:
     return r"\m(" + "|".join(re.escape(w).replace(r"\ ", r"\s+") for w in words) + r")\M"
 
 
-def owner_type_sql(col: str, rules: list[dict]) -> str:
+def owner_type_sql(col: str, col2: str, rules: list[dict]) -> str:
+    """CASE expression for the owner type of `col` (rules with also_owner2 also test `col2`)."""
+    sql_re = lambda words: words_regex(words).replace("'", "''")
     whens = []
     for r in rules:
-        cond = f"upper({col}) ~ '{words_regex(r['words'])}'"
-        if r.get("exclude"):
-            cond += f" AND NOT upper({col}) ~ '{words_regex(r['exclude'])}'"
-        whens.append(f"WHEN {cond} THEN '{r['type']}'")
+        names = [col, f"coalesce({col2}, '')"] if r.get("also_owner2") else [col]
+        conds = []
+        for n in names:
+            c = f"upper({n}) ~ '{sql_re(r['words'])}'"
+            if r.get("exclude"):
+                c += f" AND NOT upper({n}) ~ '{sql_re(r['exclude'])}'"
+            conds.append(f"({c})")
+        whens.append(f"WHEN {' OR '.join(conds)} THEN '{r['type']}'")
     return f"CASE WHEN {col} IS NULL THEN NULL {' '.join(whens)} ELSE 'individual' END"
 
 
-def owner_type(name: str | None, rules: list[dict]) -> str | None:
+def owner_type(name: str | None, rules: list[dict], owner2: str | None = None) -> str | None:
     """Same rule as owner_type_sql, in Python (for tests and spot checks)."""
     if name is None:
         return None
     py = lambda words: re.compile(words_regex(words).replace(r"\m", r"\b").replace(r"\M", r"\b"))
     for r in rules:
-        if py(r["words"]).search(name.upper()) and not (r.get("exclude") and py(r["exclude"]).search(name.upper())):
-            return r["type"]
+        for n in [name, owner2 or ""] if r.get("also_owner2") else [name]:
+            if py(r["words"]).search(n.upper()) and not (r.get("exclude") and py(r["exclude"]).search(n.upper())):
+                return r["type"]
     return "individual"
 
 
@@ -75,12 +83,14 @@ def owner_type(name: str | None, rules: list[dict]) -> str | None:
 #    street and drop out, so they don't inflate frontage or fake a corner.
 FRONTAGE_SQL = """
 CREATE UNLOGGED TABLE {s}.feature_street_lines AS
-SELECT street_code, street_class = ANY(:private) AS private, ST_Subdivide(geom, 64) AS g
+SELECT street_code, street_class = ANY(:private) AS private, coalesce(lifecycle, '') = ANY(:proposed) AS proposed,
+       CASE WHEN coalesce(thoroughfare, '') = ANY(:major) THEN :buf_major ELSE :buf END AS reach,
+       ST_Subdivide(geom, 64) AS g
 FROM {s}.streets
 WHERE NOT (coalesce(lifecycle, '') = ANY(:ex_life)) AND NOT (coalesce(thoroughfare, '') = ANY(:ex_thru));
 CREATE INDEX ON {s}.feature_street_lines USING gist (g);
 CREATE UNLOGGED TABLE {s}.feature_street_buffers AS
-SELECT street_code, private, ST_Subdivide(ST_Buffer(g, :buf), 256) AS g FROM {s}.feature_street_lines;
+SELECT street_code, private, proposed, ST_Subdivide(ST_Buffer(g, reach), 256) AS g FROM {s}.feature_street_lines;
 CREATE INDEX ON {s}.feature_street_buffers USING gist (g);
 ANALYZE {s}.feature_street_lines; ANALYZE {s}.feature_street_buffers;
 """
@@ -88,19 +98,19 @@ ANALYZE {s}.feature_street_lines; ANALYZE {s}.feature_street_buffers;
 FRONTAGE_HITS_SQL = """
 CREATE UNLOGGED TABLE {s}.feature_frontage_hits AS
 WITH segs AS (
-    SELECT p.pin, b.street_code, b.private, (ST_DumpSegments(
+    SELECT p.pin, b.street_code, b.private, b.proposed, (ST_DumpSegments(
                ST_CollectionExtract(ST_Intersection(ST_Boundary(p.geom), b.g), 2))).geom AS seg
     FROM {s}.parcels p JOIN {s}.feature_street_buffers b ON ST_Intersects(p.geom, b.g)
 ),
 dist AS (
     SELECT sg.*, ST_Length(sg.seg) AS len,
            (SELECT min(ST_Distance(ST_StartPoint(sg.seg), l.g)) FROM {s}.feature_street_lines l
-            WHERE l.street_code IS NOT DISTINCT FROM sg.street_code AND ST_DWithin(l.g, sg.seg, :buf + 1)) AS d0,
+            WHERE l.street_code IS NOT DISTINCT FROM sg.street_code AND ST_DWithin(l.g, sg.seg, :reach_max + 1)) AS d0,
            (SELECT min(ST_Distance(ST_EndPoint(sg.seg), l.g)) FROM {s}.feature_street_lines l
-            WHERE l.street_code IS NOT DISTINCT FROM sg.street_code AND ST_DWithin(l.g, sg.seg, :buf + 1)) AS d1
+            WHERE l.street_code IS NOT DISTINCT FROM sg.street_code AND ST_DWithin(l.g, sg.seg, :reach_max + 1)) AS d1
     FROM segs sg
 )
-SELECT pin, street_code, private, seg AS l FROM dist
+SELECT pin, street_code, private, proposed, seg AS l FROM dist
 WHERE len > 0 AND abs(d0 - d1) <= :parallel * len
 """
 
@@ -110,7 +120,11 @@ WITH frontage AS (
     SELECT pin,
            ST_Length(ST_UnaryUnion(ST_Collect(l ORDER BY ST_XMin(l), ST_YMin(l), ST_Length(l)), 0.01)) AS frontage_ft,
            coalesce(ST_Length(ST_UnaryUnion(ST_Collect(l ORDER BY ST_XMin(l), ST_YMin(l), ST_Length(l))
-               FILTER (WHERE private), 0.01)), 0) AS private_frontage_ft
+               FILTER (WHERE private), 0.01)), 0) AS private_frontage_ft,
+           coalesce(ST_Length(ST_UnaryUnion(ST_Collect(l ORDER BY ST_XMin(l), ST_YMin(l), ST_Length(l))
+               FILTER (WHERE proposed), 0.01)), 0) AS proposed_frontage_ft,
+           ST_Length(ST_UnaryUnion(ST_Collect(l ORDER BY ST_XMin(l), ST_YMin(l), ST_Length(l))
+               FILTER (WHERE NOT proposed), 0.01)) AS built_frontage_ft
     FROM {s}.feature_frontage_hits GROUP BY pin
 ),
 per_street AS (
@@ -126,7 +140,8 @@ corners AS (
     SELECT a.pin, bool_or(ST_DWithin(a.g, b.g, :corner_gap)) AS corner
     FROM real_street a JOIN real_street b ON a.pin = b.pin AND a.street_code < b.street_code GROUP BY a.pin
 )
-SELECT f.pin, f.frontage_ft, f.private_frontage_ft, coalesce(n.street_frontages, 0) AS street_frontages,
+SELECT f.pin, f.frontage_ft, f.private_frontage_ft, f.proposed_frontage_ft,
+       coalesce(f.built_frontage_ft, 0) = 0 AS proposed_only, coalesce(n.street_frontages, 0) AS street_frontages,
        coalesce(c.corner, false) AS corner
 FROM frontage f LEFT JOIN streets_n n USING (pin) LEFT JOIN corners c USING (pin)
 """
@@ -158,10 +173,13 @@ base AS (
            c.unbuildable_acres, c.net_buildable_acres, c.floodplain_flag_acres,
            c.slope_15_25_acres, c.slope_over_25_acres, c.possible_unmapped_wetland_acres,
            coalesce(f.frontage_ft, 0) AS frontage_ft, coalesce(f.private_frontage_ft, 0) AS private_frontage_ft,
+           coalesce(f.proposed_frontage_ft, 0) AS proposed_frontage_ft, coalesce(f.proposed_only, false) AS proposed_only,
+           coalesce(upper(p.parcel_use) ~ :common_uses, false) AS common_use,
            coalesce(f.street_frontages, 0) AS street_frontages, coalesce(f.corner, false) AS corner,
            least(d.a, d.b) AS lot_width_ft, greatest(d.a, d.b) AS lot_depth_ft,
            p.land_value, p.building_value, p.total_value, b.year_built,
-           p.last_sale_date, p.last_sale_price, p.mail_state, p.owner_name, p.mail_address1, p.account_count,
+           p.last_sale_date, p.last_sale_price, p.mail_state, p.owner_name, p.owner2_name, p.mail_address1,
+           p.mail_address2, p.account_count,
            oc.parcels AS owner_parcels
     FROM {s}.parcels p
     LEFT JOIN {s}.parcel_constraints c USING (pin)
@@ -178,11 +196,13 @@ SELECT pin, site_address, municipality, in_municipal_limit, etj_jurisdiction, la
        planned_project_nearby,
        unbuildable_acres, net_buildable_acres, floodplain_flag_acres, slope_15_25_acres, slope_over_25_acres,
        possible_unmapped_wetland_acres,
-       frontage_ft, private_frontage_ft, street_frontages,
+       frontage_ft, private_frontage_ft, proposed_frontage_ft, street_frontages,
+       frontage_ft > 0 AND proposed_only AS frontage_proposed_only,
        corner AS corner_lot,
        street_frontages >= 2 AND NOT corner AS through_lot,
        frontage_ft > 0 AND frontage_ft < :flag_max AND frontage_ft < :flag_ratio * lot_width_ft AS flag_lot,
-       frontage_ft = 0 AS landlocked,
+       frontage_ft = 0 AND common_use AS access_via_common_area,
+       frontage_ft = 0 AND NOT common_use AS landlocked,
        lot_width_ft, lot_depth_ft,
        land_value, building_value, total_value, year_built,
        CASE WHEN total_value > 0 THEN building_value / total_value END AS building_value_ratio,
@@ -199,6 +219,9 @@ SELECT pin, site_address, municipality, in_municipal_limit, etj_jurisdiction, la
             THEN substring(mail_address1 from '^\\d+\\s+\\S+') <> substring(site_address from '^\\d+\\s+\\S+') END
            AS absentee,
        {owner_type} AS owner_type,
+       -- in care of: C/O or % in the owner names or mailing address (an estate, attorney, or manager)
+       CASE WHEN owner_name IS NOT NULL THEN concat_ws(' ', owner_name, owner2_name, mail_address1, mail_address2)
+            ~ '(C/O|%)' END AS in_care_of,
        CASE WHEN owner_parcels IS NOT NULL THEN owner_parcels - 1 END AS owner_other_parcels,
        account_count
 FROM base
@@ -215,16 +238,18 @@ def as_of_date(engine: Engine, schema: str = "public") -> date:
 
 
 def build_frontage(conn, cfg: dict, s: str = "public") -> None:
-    """Create {s}.feature_frontage: pin, frontage_ft, private_frontage_ft, street_frontages, corner."""
+    """Create {s}.feature_frontage: pin, frontage_ft, private/proposed frontage, street_frontages, corner."""
     st, fr = cfg["streets"], cfg["frontage"]
     temp = f"{s}.feature_street_lines, {s}.feature_street_buffers, {s}.feature_frontage_hits"
     conn.execute(text(f"DROP TABLE IF EXISTS {temp}, {s}.feature_frontage"))
-    params = {"private": st["private_class"], "buf": fr["buffer_ft"], "ex_life": st["exclude_lifecycle"],
-              "ex_thru": st["exclude_thoroughfare"]}
+    params = {"private": st["private_class"], "proposed": st["proposed_lifecycle"], "buf": fr["buffer_ft"],
+              "buf_major": fr["buffer_major_ft"], "major": fr["major_thoroughfare"],
+              "ex_life": st["exclude_lifecycle"], "ex_thru": st["exclude_thoroughfare"]}
     for stmt in FRONTAGE_SQL.format(s=s).split(";"):
         if stmt.strip():
             conn.execute(text(stmt), {k: v for k, v in params.items() if f":{k}" in stmt})
-    conn.execute(text(FRONTAGE_HITS_SQL.format(s=s)), {"buf": fr["buffer_ft"], "parallel": fr["parallel_ratio"]})
+    conn.execute(text(FRONTAGE_HITS_SQL.format(s=s)),
+                 {"reach_max": max(fr["buffer_ft"], fr["buffer_major_ft"]), "parallel": fr["parallel_ratio"]})
     conn.execute(text(f"CREATE INDEX ON {s}.feature_frontage_hits (pin)"))
     conn.execute(text(FRONTAGE_SUMMARY_SQL.format(s=s)),
                  {"min_street": fr["min_per_street_ft"], "corner_gap": fr["corner_max_gap_ft"]})
@@ -237,9 +262,10 @@ def build(engine: Engine, cfg: dict, as_of: date, outside_municipality: list[str
     st, fr, td = cfg["streets"], cfg["frontage"], cfg["teardown"]
     with engine.begin() as conn:
         build_frontage(conn, cfg, s)
-        sql = FEATURES_SQL.format(s=s, owner_type=owner_type_sql("owner_name", cfg["owner_type_rules"]))
+        sql = FEATURES_SQL.format(s=s, owner_type=owner_type_sql("owner_name", "owner2_name", cfg["owner_type_rules"]))
         create_staging_from_query(conn, f"{s}.parcel_features_staging", sql, {
             "flag_max": fr["flag_lot_max_frontage_ft"], "flag_ratio": fr["flag_lot_max_frontage_to_width"],
+            "common_uses": "(" + "|".join(re.escape(u) for u in fr["common_access_land_uses"]) + ")",
             "td_ratio": td["max_building_value_ratio"], "td_year": td["built_before"], "as_of": as_of,
             "outside": outside_municipality})
         conn.execute(text(f"DROP TABLE {s}.feature_frontage"))
@@ -257,7 +283,7 @@ def quality_report(engine: Engine, schema: str = "public") -> dict:
         nulls = conn.execute(text(
             "SELECT " + ", ".join(f"avg(({c} IS NULL)::int)" for c in df_cols) + f" FROM {s}.parcel_features")).one()
         flags = conn.execute(text(
-            f"SELECT count(*) FILTER (WHERE corner_lot), count(*) FILTER (WHERE through_lot), count(*) FILTER (WHERE flag_lot), "
+            f"SELECT count(*) FILTER (WHERE corner_lot), count(*) FILTER (WHERE through_lot), count(*) FILTER (WHERE flag_lot), count(*) FILTER (WHERE access_via_common_area), count(*) FILTER (WHERE frontage_proposed_only), "
             f"count(*) FILTER (WHERE landlocked), "
             f"count(*) FILTER (WHERE teardown_candidate), count(*) FILTER (WHERE vacant), count(*) FILTER (WHERE absentee), "
             f"count(*) FILTER (WHERE out_of_state) FROM {s}.parcel_features")).one()
@@ -266,7 +292,7 @@ def quality_report(engine: Engine, schema: str = "public") -> dict:
     return {
         "rows": features, "parcels": parcels,
         "null_rates": {c: round(float(v), 4) for c, v in zip(df_cols, nulls)},
-        "flags": dict(zip(["corner_lot", "through_lot", "flag_lot", "landlocked", "teardown_candidate", "vacant", "absentee",
+        "flags": dict(zip(["corner_lot", "through_lot", "flag_lot", "access_via_common_area", "frontage_proposed_only", "landlocked", "teardown_candidate", "vacant", "absentee",
                            "out_of_state"], flags)),
         "owner_types": owner_types,
     }

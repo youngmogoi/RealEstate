@@ -137,13 +137,39 @@ def test_corner_lot(frontage):
 
 
 def test_through_lot_is_not_a_corner(frontage):
-    r = frontage.loc["00103301"]  # 16815 Lake Shore Dr, Cornelius: streets on opposite sides
-    assert r.street_frontages == 2 and not r.corner and r.frontage_ft == pytest.approx(167.5, abs=0.5)
+    r = frontage.loc["00102332"]  # 16000 Cramur Dr, Huntersville: streets on opposite sides
+    assert r.street_frontages == 2 and not r.corner and r.frontage_ft == pytest.approx(201.5, abs=0.5)
 
 
 def test_flag_lot_and_landlocked(frontage):
-    flag = frontage.loc["00101429"]  # 14017 NC 73 Hwy: 30 ft of frontage on a 153 ft wide lot
-    assert flag.frontage_ft == pytest.approx(30.4, abs=0.5)
+    flag = frontage.loc["00109193"]  # 19506 Sunnypoint Ct: 21.5 ft at the street on a 141 ft wide lot
+    assert flag.frontage_ft == pytest.approx(21.5, abs=0.5)
     assert flag.frontage_ft < CFG["frontage"]["flag_lot_max_frontage_ft"]
-    assert flag.frontage_ft < CFG["frontage"]["flag_lot_max_frontage_to_width"] * 152.8
+    assert flag.frontage_ft < CFG["frontage"]["flag_lot_max_frontage_to_width"] * 140.6
     assert "00101325" not in frontage.index  # 14051 Island Dr: no street within reach, so no frontage row
+
+
+def test_major_road_frontage_at_wide_right_of_way(frontage):
+    # 14017 NC 73 Hwy: its lot line runs 50 ft from the centerline of a major road. At a 50 ft
+    # reach only 30 ft counted (it looked like a flag lot); the 90 ft major-road reach finds all 163 ft.
+    r = frontage.loc["00101429"]
+    assert r.frontage_ft == pytest.approx(163.0, abs=0.5) and r.street_frontages == 1
+
+
+def test_frontage_on_proposed_street(frontage):
+    r = frontage.loc["01101413"]  # 1521 Yellow Springs Dr: the city still marks the street Proposed
+    assert r.frontage_ft == pytest.approx(60.0, abs=0.5)
+    assert r.proposed_frontage_ft == pytest.approx(60.0, abs=0.5) and r.proposed_only
+
+
+@pytest.mark.parametrize("name, owner2, expected", [
+    ("CLAWSON KATIE W (LIFE ESTATE)", None, "estate_heirs"),
+    ("MORRISON RALPH LIFE EST", None, "estate_heirs"),
+    ("WILKES LOUIS GLENN EST", "% KAREN WILKES", "estate_heirs"),
+    ("MAYES JAMES COY F/T B/W", "G R MAYES JR HEIRS", "estate_heirs"),  # heirs only in the second name
+    ("PO ESTATE LLC", None, "llc_corporate"),
+    ("HEISE BRIAN ET AL", None, "individual"),                         # co-owners, not an estate
+    ("KELLER GRANT", "SMITH REAL ESTATE", "individual"),
+])
+def test_owner_type_estate_rules(name, owner2, expected):
+    assert owner_type(name, CFG["owner_type_rules"], owner2) == expected

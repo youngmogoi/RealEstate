@@ -45,6 +45,9 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
 - Phase 2.2 (decided 2026-10-27): single-family minimum lot size and lot width checks use
   GROSS lot area, because zoning measures the whole lot. Net buildable acres apply only to
   subdivision and townhome yield.
+- Phase 2.4 deal routing (decided 2026-10-28): exclude government, utility, church/nonprofit,
+  HOA and common-area parcels from routing. Keep them in the data with their flags
+  (owner_type, land use, access_via_common_area), but never score them as opportunities.
 - Floodplain flag (decided 2026-10-27): 1% annual chance only (the community layer's 0.2%
   shapes are dropped), and open water (NWI lakes and ponds) is subtracted, since the FEMA
   layer has no zone codes and 40% of it lies over lakes.
@@ -104,9 +107,17 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
 - USGS 3DEP elevation (exportImage) returns meters and errors on tiles above ~2,000 px;
   the slope band raster is cached in data/raw/constraints/derived/.
 - 2026-10-27: street centerlines come from the city's map server (CountyData/Streets), which
-  accepts scripts. Lot lines sit 25-50 ft from centerlines, so frontage uses a 50 ft reach and
-  counts only lot-line segments roughly parallel to the street (side lines would add ~40 ft).
-  Two frontages that meet = corner lot; on opposite sides = through lot.
+  accepts scripts. Lot lines sit 25-50 ft from local centerlines and farther on cul-de-sac bulbs
+  and arterials, so frontage reaches 65 ft (local) / 90 ft (major thoroughfares) and counts only
+  lot-line segments roughly parallel to the street (side lines would add ~40 ft). Two frontages
+  that meet = corner lot; on opposite sides = through lot.
+- 2026-10-28 landlocked review (25-parcel sample): most "landlocked" lots fronted streets the
+  city still marks Proposed (built, status lagging), were townhomes on private drives, or sat
+  beyond a 50 ft reach. Proposed streets now count (frontage_proposed_only flags them);
+  townhome/condo/common parcels with no frontage are access_via_common_area. 32,578 -> 8,155.
+- Owner names rarely say "estate" in the county file (~170 parcels); "C/O" and "%" in-care-of
+  names live in the second owner field (18k parcels, mostly investor portfolios' agents).
+  Real estate detection needs probate data (Phase 3).
 - Geometry unions and float sums in parallel queries vary in the last bits run to run, which
   breaks "rerun = zero changes". Every ST_Collect/sum feeding a stored value needs an ORDER BY.
 - There is no ETJ layer; etj_jurisdiction = zoning jurisdiction of an unincorporated parcel.

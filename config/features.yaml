@@ -6,15 +6,24 @@ streets:
   url: https://gis.charlottenc.gov/arcgis/rest/services/CountyData/Streets/MapServer/0
   download_dir: data/raw/streets
   # Segments that give a lot no frontage
-  exclude_lifecycle: ["Proposed", "Retired"]
+  exclude_lifecycle: ["Retired"]
   exclude_thoroughfare: ["EXFRY", "PROPFRY", "RAMP"]   # freeways and ramps: no driveway access
   private_class: ["PV"]                               # private streets count, reported separately
+  # (draft) Proposed streets count (the city's status lags construction: 7 of 25 sampled
+  # "landlocked" lots fronted one), reported as proposed_frontage_ft; a lot fronting only
+  # proposed streets gets frontage_proposed_only.
+  proposed_lifecycle: ["Proposed"]
 
 frontage:
   # Boundary within this distance of a centerline is frontage. Lot lines sit 25-50 ft from
-  # centerlines (50-60 ft rights-of-way plus mapping offset); at 30 ft, 47,511 ordinary homes
-  # came out landlocked, at 50 ft 7,461 (decided 2026-10-27).
-  buffer_ft: 50
+  # local centerlines (50-60 ft rights-of-way plus mapping offset); cul-de-sac bulbs and wide
+  # arterials put them farther (53-68 ft in the 2026-10-27 landlocked sample). (draft)
+  buffer_ft: 65                  # local streets
+  buffer_major_ft: 90            # major thoroughfares (wider rights-of-way)
+  major_thoroughfare: ["EXMJTH", "EXCOLLMJ", "EXMINTH", "EXMJTHC3C", "C2EX", "PROPMJTH", "PROPMINTH"]
+  # (draft) Parcels with no frontage whose land use contains one of these reach the street through
+  # HOA/common land: access_via_common_area instead of landlocked.
+  common_access_land_uses: ["TOWN HOUSE", "TOWNHOUSE", "CONDO", "COMMON"]
   # A lot-line segment is frontage only if roughly parallel to the street: its two ends differ
   # in distance from the centerline by at most this share of its length (0.5 = within ~30 deg).
   # This keeps the first stretch of the side lot lines out of frontage.
@@ -45,8 +54,12 @@ owner_type_rules:
             "BAPTIST", "METHODIST", "METH", "PRESBYTERIAN", "EPISCOPAL", "EPISC", "CATHOLIC", "LUTHERAN",
             "FOUNDATION", "ASSOCIATION", "ASSN", "SOCIETY", "LODGE", "CHARITY", "HABITAT"]
   - type: estate_heirs
-    words: ["ESTATE", "EST OF", "HEIRS", "HEIR", "DECEASED"]
+    # The county rarely records estate status in names (~230 parcels labeled, 2026-10-27); most
+    # inherited property stays under the decedent's plain name. Also checks the second owner
+    # name, where "G R MAYES JR HEIRS" and similar appear.
+    words: ["ESTATE", "EST", "EST OF", "LIFE EST", "LIFE ESTATE", "HEIRS", "HEIR", "DECEASED", "DECD", "DEC'D"]
     exclude: ["REAL ESTATE"]
+    also_owner2: true
   - type: trust
     words: ["TRUST", "TRUSTEE", "TRUSTEES", "TR", "REVOCABLE", "IRREVOCABLE"]
   - type: llc_corporate
