@@ -102,6 +102,17 @@ rezoning_targets:
         Neighborhood 1: N1-F        # with N1-F's townhome (MF Attached) conditions
       source: "Charlotte Future 2040 Policy Map; Table 15-1 allows MF Attached in N1-F, N2-A, N2-B, N2-C"
 
+# Existing lots that are smaller or narrower than their district requires (decided 2026-10-28).
+nonconforming_lots:
+  CHARLOTTE:
+    # "A nonconforming lot may be used for any of the uses permitted in the zoning district ...
+    # provided that the development on the lot meets all dimensional and design standards"
+    buildable: true
+    # ... except a VACANT one that could be combined with adjoining vacant lot(s) of the same
+    # owner into one or more conforming lots (yield: none, flag combine_required).
+    combine_vacant_same_owner: true
+    source: "UDO 38.8.A-B"
+
 districts:
   # Charlotte UDO, amended March 23, 2026: data/raw/udo/CHARLOTTEUDO/2026-10-28/ (udo.pdf;
   # tables from the article pages, every number matched to the PDF text).

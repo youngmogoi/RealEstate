@@ -22,6 +22,9 @@ yield:
   # many developed parcels (building value > 0) within this distance of the parcel.
   blockface_radius_ft: 300           # (draft)
   blockface_min_dwellings: 4         # UDO: 25% developed or at least 4 existing dwellings
+  # An undersized (nonconforming) existing lot is buildable only if, after the district's side,
+  # front and rear setbacks, an envelope at least this wide and deep remains (UDO 38.8.A).
+  min_envelope_ft: 20                # (draft)
 
 townhome:
   # Product assumptions for townhome yield (not zoning). Units per building = max building

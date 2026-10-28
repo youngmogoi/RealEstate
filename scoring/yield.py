@@ -11,6 +11,11 @@ Per parcel (one row, keyed by pin; history in parcel_yield_history):
   THAT type's lot conditions. Lot area is GROSS (the whole lot, as zoning measures it; the
   smaller of shape and assessor acres when they disagree, flag verify_acreage) and lot width is
   parcel_features.lot_width_ft. Lot standards apply to the parent parcel, not sublots.
+  An existing lot below the minimum area or width (nonconforming_lot) may still be used for any
+  permitted type if a building envelope fits inside the setbacks (UDO 38.8.A), unless it is
+  vacant and could be combined with the same owner's adjoining vacant land into a conforming
+  lot (combine_required: no standalone yield, UDO 38.8.B). New lots (splits, subdivisions)
+  must conform.
 - split_lots / split_<type>: conforming lots the parcel divides into (by gross area and by lot
   width), and per-type units on those lots. 1 = no split possible.
 - sub_lots: standard subdivision, NET buildable acres x usable_ratio / min lot size.
@@ -56,6 +61,7 @@ COLUMNS = [
     "adu_allowed",
     "no_frontage", "setback_varies", "reduced_depth_possible", "multi_dwelling_possible", "arterial_frontage",
     "apartments_possible", "verify_acreage", "site_plan_governs", "no_zoning_rule",
+    "nonconforming_lot", "combine_required",
     "obligations", "notes",
 ]
 INT_COLS = [*[f"cur_{t}" for t in TYPES], "split_lots", *[f"split_{t}" for t in TYPES], "sub_lots",
@@ -63,7 +69,7 @@ INT_COLS = [*[f"cur_{t}" for t in TYPES], "split_lots", *[f"split_{t}" for t in 
             "sub_mixed_income_affordable_units", "townhome_units"]
 BOOL_COLS = ["townhome_needs_rezoning", "townhome_speculative", "adu_allowed", "no_frontage", "setback_varies",
              "reduced_depth_possible", "multi_dwelling_possible", "arterial_frontage", "apartments_possible",
-             "verify_acreage", "site_plan_governs", "no_zoning_rule"]
+             "verify_acreage", "site_plan_governs", "no_zoning_rule", "nonconforming_lot", "combine_required"]
 
 
 def _allowed(e: dict | None) -> bool:
@@ -80,14 +86,28 @@ def district_rule(rules: dict, jurisdiction: str, base: str) -> dict | None:
     return rule if by_right_usable(rule) else None
 
 
-def type_standards(rules: dict, jurisdiction: str, rule: dict, t: str) -> tuple[float, float]:
-    """(min lot sf, min lot width ft) a housing type must meet: its district's, or those of the
+def standards_rule(rules: dict, jurisdiction: str, rule: dict, t: str) -> dict:
+    """The rule whose lot and setback standards a housing type must meet: its district's, or the
     district it must be built to (`requires.develop_as`, e.g. N2-B duplexes use N1-E)."""
     req = (rule["types"].get(t) or {}).get("requires") or {}
     std = district_rule(rules, jurisdiction, req["develop_as"]) if req.get("develop_as") else rule
     if std is None:
         raise ValueError(f"{jurisdiction} {req.get('develop_as')}: develop_as district has no usable rule")
+    return std
+
+
+def type_standards(rules: dict, jurisdiction: str, rule: dict, t: str) -> tuple[float, float]:
+    """(min lot sf, min lot width ft) a housing type must meet."""
+    std = standards_rule(rules, jurisdiction, rule, t)
     return std["min_lot_sf"]["value"], std["min_lot_width_ft"]["value"] or 0
+
+
+def envelope_fits(std: dict, width_ft: float | None, depth_ft: float | None, min_ft: float) -> bool:
+    """Does a building envelope at least min_ft wide and deep fit inside the setbacks?"""
+    sb = std["setbacks_ft"]
+    if width_ft is None or depth_ft is None or not isinstance(sb.get("front"), int | float):
+        return False
+    return width_ft - 2 * sb["side"] >= min_ft and depth_ft - sb["front"] - sb["rear"] >= min_ft
 
 
 def lots(area_sf: float, width_ft: float | None, lot_sf: float, lot_width: float) -> int:
@@ -179,6 +199,8 @@ def compute_yield(p: dict, rules: dict, cfg: dict) -> dict:
     lot_sf, lot_width = type_standards(rules, j, rule, "sfh") if _allowed(types.get("sfh")) else (
         rule["min_lot_sf"]["value"], rule["min_lot_width_ft"]["value"] or 0)
     out["split_lots"] = lots(area_sf, width, lot_sf, lot_width)
+    nc = (rules.get("nonconforming_lots") or {}).get(j) or {}
+    adjoining = p.get("adjoining_vacant_sf") or 0
     for t in TYPES:
         e = types.get(t)
         out[f"cur_{t}"] = out[f"split_{t}"] = 0
@@ -192,6 +214,16 @@ def compute_yield(p: dict, rules: dict, cfg: dict) -> dict:
         if n >= 1:
             out[f"cur_{t}"] = e["units_per_building"]
             out[f"split_{t}"] = n * e["units_per_building"]
+        elif nc.get("buildable") and area_sf > 0 and envelope_fits(
+                standards_rule(rules, j, rule, t), width, p.get("lot_depth_ft"), y["min_envelope_ft"]):
+            # an existing undersized lot (UDO 38.8.A), unless vacant and combinable (38.8.B)
+            out["nonconforming_lot"] = True
+            if nc.get("combine_vacant_same_owner") and p.get("vacant") and adjoining > 0 \
+                    and area_sf + adjoining >= t_lot:
+                out["combine_required"] = True
+                continue
+            out[f"cur_{t}"] = e["units_per_building"]
+        if out[f"cur_{t}"]:
             notes += t_notes
             req = e.get("requires") or {}
             if req.get("affordable_units"):
@@ -265,6 +297,13 @@ PREP_SQL = [
        SELECT pin, ST_PointOnSurface(geom) AS g FROM {s}.parcels WHERE coalesce(building_value, 0) > 0""",
     "CREATE INDEX ON yield_developed USING gist (g)",
     "ANALYZE yield_developed",
+    # the same owner's vacant land touching a vacant parcel (UDO 38.8.B combination test)
+    """CREATE TEMP TABLE yield_adjoining ON COMMIT DROP AS
+       SELECT a.pin, sum(ST_Area(b.geom)) AS sf
+       FROM {s}.parcels a JOIN {s}.parcel_features fa ON fa.pin = a.pin AND fa.vacant
+       JOIN {s}.parcels b ON b.pin <> a.pin AND b.owner_name = a.owner_name AND ST_DWithin(a.geom, b.geom, 1)
+       JOIN {s}.parcel_features fb ON fb.pin = b.pin AND fb.vacant
+       GROUP BY a.pin""",
     # developed parcels near each parcel: the established-blockface approximation
     """CREATE TEMP TABLE yield_blockface ON COMMIT DROP AS
        SELECT p.pin, count(*) AS n FROM {s}.parcels p
@@ -275,12 +314,14 @@ PREP_SQL = [
 INPUT_SQL = """
 SELECT f.pin, f.zoning_jurisdiction AS jurisdiction, f.zone_code, f.split_zoning, f.gross_acres,
        p.assessor_acres, coalesce(p.acres_mismatch, false) AS acres_mismatch, f.net_buildable_acres,
-       f.lot_width_ft, f.frontage_ft, f.through_lot, f.place_type,
-       a.pin IS NOT NULL AS arterial_frontage, coalesce(b.n, 0) AS blockface_dwellings
+       f.lot_width_ft, f.lot_depth_ft, f.frontage_ft, f.through_lot, f.place_type, f.vacant,
+       a.pin IS NOT NULL AS arterial_frontage, coalesce(b.n, 0) AS blockface_dwellings,
+       coalesce(v.sf, 0) AS adjoining_vacant_sf
 FROM {s}.parcel_features f
 JOIN {s}.parcels p USING (pin)
 LEFT JOIN yield_arterial a USING (pin)
 LEFT JOIN yield_blockface b USING (pin)
+LEFT JOIN yield_adjoining v USING (pin)
 ORDER BY f.pin
 """
 
@@ -318,7 +359,7 @@ def summary(df: pd.DataFrame) -> str:
     br = df[df["yield_basis"] == "by_right"]
     lines = [f"Parcel yield: {len(df):,} parcels",
              "  basis: " + ", ".join(f"{k} {v:,}" for k, v in by.items()),
-             "  by-right lots that conform today: " + ", ".join(
+             "  units on the lot as it is (conforming or usable nonconforming): " + ", ".join(
                  f"{t} {int((br[f'cur_{t}'] > 0).sum()):,}" for t in TYPES),
              f"  lot split possible (2+ lots): {int((br['split_lots'] >= 2).sum()):,}",
              f"  subdivision 2+ lots: standard {int((br['sub_lots'] >= 2).sum()):,}, conservation "
@@ -328,7 +369,8 @@ def summary(df: pd.DataFrame) -> str:
              f"by rezoning (speculative): {int(((br['townhome_units'] > 0) & br['townhome_needs_rezoning']).sum()):,}",
              "  flags: " + ", ".join(f"{c} {int(df[c].sum()):,}" for c in
                                      ["no_frontage", "setback_varies", "reduced_depth_possible",
-                                      "multi_dwelling_possible", "arterial_frontage", "verify_acreage"])]
+                                      "multi_dwelling_possible", "arterial_frontage", "verify_acreage",
+                                      "nonconforming_lot", "combine_required"])]
     return "\n".join(lines)
 
 

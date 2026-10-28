@@ -27,7 +27,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "yield" / "parcels.csv"
 
 def _parcels() -> dict[str, dict]:
     df = pd.read_csv(FIXTURE, dtype={"pin": str})
-    for c in ("split_zoning", "acres_mismatch", "through_lot", "arterial_frontage"):
+    for c in ("split_zoning", "acres_mismatch", "through_lot", "arterial_frontage", "vacant"):
         df[c] = df[c].map({"t": True, "f": False})
     return {r["pin"]: {k: (None if pd.isna(v) else v) for k, v in r.items()} for r in df.to_dict("records")}
 
@@ -45,16 +45,21 @@ def test_settings_used_by_these_hand_calculations():
 
 
 def test_undersized_n1a_lot_02522236():
-    # 9630 Nettle Dr, N1-A: 0.18593 ac = 8,099 sf < 10,000; width 64.9 < 70 -> nothing conforms
+    # 9630 Nettle Dr, N1-A: 0.18593 ac = 8,099 sf < 10,000; width 64.9 < 70: a nonconforming lot
+    # (county record: 1 LOT, house built 1996). UDO 38.8.A: usable for any permitted type if the
+    # building meets the setbacks: envelope 64.9 - 2 x 5 = 54.9 ft wide, 129.5 - 27 - 40 = 62.5 ft
+    # deep, both >= 20 ft. Quadraplex still needs an arterial.
     r = y("02522236")
-    assert [r[f"cur_{t}"] for t in Y.TYPES] == [0, 0, 0, 0]
+    assert [r[f"cur_{t}"] for t in Y.TYPES] == [1, 2, 3, 0]
+    assert r["nonconforming_lot"] and not r["combine_required"]
+    assert [r[f"split_{t}"] for t in Y.TYPES] == [0, 0, 0, 0]   # new lots must conform
     assert r["split_lots"] == 0 and r["sub_lots"] == 0          # 8,099 x 0.70 / 10,000 = 0.57
     # Townhome needs rezoning; Neighborhood 1 place type -> N1-F. Site = 8,099 x 0.70 = 5,669 sf;
     # coverage 50% (under 10,000 sf): 5,669 x 0.5 / 880 = 3.2 -> 3; open space 250/unit:
     # 5,669 / 1,130 = 5.0 -> 5; 2 buildings x 6 units per 3,000 sf lot: 1 lot -> 12. Least: 3.
     assert (r["townhome_units"], r["townhome_needs_rezoning"], r["townhome_target_district"]) == (3, True, "N1-F")
     assert r["townhome_speculative"]
-    assert not r["adu_allowed"]                                   # no conforming house to attach it to
+    assert r["adu_allowed"]                                       # accessory to the house it may have
     assert r["setback_varies"] and not r["reduced_depth_possible"] and not r["multi_dwelling_possible"]
     assert not r["no_frontage"] and r["obligations"] is None
 
@@ -137,6 +142,19 @@ def test_n2b_townhome_by_right_02918135():
     assert r["apartments_possible"] and r["multi_dwelling_possible"] and r["adu_allowed"]
     assert not r["setback_varies"] and not r["reduced_depth_possible"]
     assert r["rule_status"] == "draft"                            # N2-B awaits your PDF check
+
+
+def test_nonconforming_sliver_and_combinable_vacant_lot():
+    base = dict(P["02522236"])
+    # a 25 ft wide strip: 25 - 2 x 5 = 15 ft < 20 ft envelope -> no house fits
+    r = Y.compute_yield({**base, "lot_width_ft": 25.0}, RULES, CFG)
+    assert [r[f"cur_{t}"] for t in Y.TYPES] == [0, 0, 0, 0] and not r["nonconforming_lot"]
+    # vacant, and the same owner's adjoining vacant land (2,500 sf) makes 8,099 + 2,500 >= 10,000
+    r = Y.compute_yield({**base, "vacant": True, "adjoining_vacant_sf": 2500.0}, RULES, CFG)
+    assert [r[f"cur_{t}"] for t in Y.TYPES] == [0, 0, 0, 0] and r["combine_required"] and r["nonconforming_lot"]
+    # vacant but the neighbor is too small to reach 10,000 sf together: stands alone
+    r = Y.compute_yield({**base, "vacant": True, "adjoining_vacant_sf": 1000.0}, RULES, CFG)
+    assert r["cur_sfh"] == 1 and not r["combine_required"]
 
 
 def test_site_plan_and_unsupported_get_no_yield():
