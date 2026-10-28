@@ -63,6 +63,15 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   districts below the 2026-10-28 cutoff are `unsupported` (no_zoning_rule); codes with (CD) etc.
   are site_plan_governs. Arterial = thoroughfare classes in scoring.yaml (collectors excluded);
   setback_varies approximates an established blockface by developed parcels within 300 ft.
+  Lot splits use the smaller of frontage and lot width (decided 2026-10-28).
+- Buildable pieces (decided 2026-10-28, `make pieces`, features/pieces.py -> parcel_pieces):
+  land outside the vector unbuildable layers (stream/lake buffers, floodway, encroachment) is
+  split into pieces (slivers < 500 sf dropped); slope is measured per piece. A piece is
+  reachable if it touches any street (frontage reach) or a same-owner neighbor
+  (assemblage_access). Only pieces meeting the district min lot get yield. Subdivision and
+  townhome yield use reachable pieces; cut-off land -> cutoff_acres, creek_divides or
+  constraint_divides, and if_crossed_* yields. RLV adds a crossing cost (config) and values
+  if_crossed, never as the by-right best use. Lot as it is and splits stay on gross area.
 - For RLV (Phase 2.3): an ADU adds value to the principal unit, never a sale unit; quadraplex
   and mixed-income options carry affordability obligations stored with the yield;
   conservation, compact and mixed-income are separate yield options; flag duplex/triplex

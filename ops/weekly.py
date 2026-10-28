@@ -37,11 +37,12 @@ STEPS = [
     ("constraints (manual files + cached slope/soils)", "ingest.constraints"),
     ("NC OneMap check", "ingest.nconemap_check"),
     ("parcel features", "features.build"),
+    ("buildable pieces (creek cuts, street access)", "features.pieces"),
     ("parcel yield", "scoring.yield"),
     ("changes", "features.changes"),
 ]
 COUNT_TABLES = ["parcels", "parcel_owners", "parcel_sales", "parcel_zoning", "parcel_utilities", "parcel_constraints",
-                "streets", "parcel_features", "changes"]
+                "streets", "parcel_features", "parcel_pieces", "changes"]
 
 
 def run_step(module: str) -> tuple[int, str, float]:

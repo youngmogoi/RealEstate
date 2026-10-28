@@ -66,6 +66,17 @@ owner_type_rules:
     words: ["INC", "PARTNERS", "PARTNERSHIP", "HOLDINGS", "PROPERTIES", "REALTY", "INVESTMENTS", "DEVELOPMENT",
             "BANK", "GROUP", "VENTURES", "ENTERPRISES", "HOMES", "BUILDERS"]
 
+pieces:
+  # Buildable pieces (features/pieces.py, decided 2026-10-28): each parcel's land outside the
+  # vector unbuildable layers of config/constraints.yaml (stream and lake buffers, floodway,
+  # encroachment area), split into separate pieces. Steep slope is measured per piece, not used
+  # to split. A piece reaches a street when its lot line runs at least min_contact_ft inside a
+  # usable street's frontage reach (streets/frontage settings above, any street, no parallel
+  # test), or touches a same-owner neighbor (assemblage access) for at least min_contact_ft.
+  # Yield (scoring/yield.py) counts a piece only if it meets the district minimum lot area.
+  min_piece_sf: 500              # smaller fragments are mapping slivers, not stored (approved 2026-10-28)
+  min_contact_ft: 20             # same as frontage min_per_street_ft (approved 2026-10-28)
+
 changes:
   value_change_pct: 10           # (draft) total value change above this % is a change
 

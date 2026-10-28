@@ -137,9 +137,11 @@ def build_slope_raster(url: str, extent: tuple, res_ft: float, bands: dict, out_
     tmp.replace(out_path)
 
 
-def slope_acres(raster: Path, parcels_in, unbuildable_in, bands: dict, log=print) -> pd.DataFrame:
-    """Per parcel: acres in each band, and for unbuildable bands also acres outside the vector
-    unbuildable layers. parcels_in(bounds) / unbuildable_in(bounds) return GeoDataFrames."""
+def slope_acres(raster: Path, parcels_in, unbuildable_in, bands: dict, log=print, keys=("pin",)) -> pd.DataFrame:
+    """Per parcel (or per `keys` zone): acres in each band, and for unbuildable bands also acres
+    outside the vector unbuildable layers. parcels_in(bounds) / unbuildable_in(bounds) return
+    GeoDataFrames; parcels_in's frame carries the `keys` columns."""
+    keys = list(keys)
     names = list(bands)
     unb_bands = [n for n, b in bands.items() if b["class"] == "unbuildable"]
     parts = []
@@ -164,15 +166,15 @@ def slope_acres(raster: Path, parcels_in, unbuildable_in, bands: dict, log=print
                             dtype="float32", crs=src.crs, transform=transform) as ds:
                     ds.write(np.stack(layers))
                 with m.open() as ds:
-                    r = exact_extract(ds, parcels, ["sum"], include_cols=["pin"], output="pandas")
+                    r = exact_extract(ds, parcels, ["sum"], include_cols=keys, output="pandas")
             parts.append(r)
             log(f"  slope zonal window at col {window.col_off}, row {window.row_off}: {len(parcels):,} parcels")
     cols = [f"{n}_acres" for n in names] + [f"{n}_outside_vector_acres" for n in unb_bands]
     if not parts:
-        return pd.DataFrame(columns=["pin"] + cols)
+        return pd.DataFrame(columns=keys + cols)
     df = pd.concat(parts, ignore_index=True)
-    df.columns = ["pin"] + cols
-    df = df.groupby("pin", as_index=False)[cols].sum()
+    df.columns = keys + cols
+    df = df.groupby(keys, as_index=False)[cols].sum()
     df[cols] = df[cols] * px_acres
     return df
 

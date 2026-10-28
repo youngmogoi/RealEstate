@@ -1,5 +1,6 @@
 """Tests for scoring/yield.py on six real parcels (inputs in tests/fixtures/yield/parcels.csv,
-exported from parcel_features 2026-10-28). Expected values are worked by hand below.
+exported from parcel_features 2026-10-28; their buildable pieces in pieces.csv, from
+features/pieces.py: only 21311502 has any). Expected values are worked by hand below.
 
 Settings used (config/scoring.yaml, draft): usable_ratio 0.70; townhome unit 22 x 40 ft, so a
 150 ft building holds 6 units and a unit's footprint is 880 sf. 1 acre = 43,560 sf.
@@ -23,13 +24,23 @@ ROOT = Path(__file__).resolve().parent.parent
 CFG = yaml.safe_load((ROOT / "config" / "scoring.yaml").read_text(encoding="utf-8"))
 RULES = load_rules()
 FIXTURE = Path(__file__).parent / "fixtures" / "yield" / "parcels.csv"
+PIECES = Path(__file__).parent / "fixtures" / "yield" / "pieces.csv"
+
+
+def _pieces() -> pd.DataFrame:
+    df = pd.read_csv(PIECES, dtype={"pin": str})
+    for c in ("touches_street", "touches_same_owner", "creek"):
+        df[c] = df[c].map({"t": True, "f": False})
+    return df[Y.PIECE_COLS]
 
 
 def _parcels() -> dict[str, dict]:
     df = pd.read_csv(FIXTURE, dtype={"pin": str})
     for c in ("split_zoning", "acres_mismatch", "through_lot", "arterial_frontage", "vacant"):
         df[c] = df[c].map({"t": True, "f": False})
-    return {r["pin"]: {k: (None if pd.isna(v) else v) for k, v in r.items()} for r in df.to_dict("records")}
+    pieces = {pin: g.drop(columns="pin").to_dict("records") for pin, g in _pieces().groupby("pin")}
+    return {r["pin"]: {k: (None if pd.isna(v) else v) for k, v in r.items()} | {"pieces": pieces.get(r["pin"])}
+            for r in df.to_dict("records")}
 
 
 P = _parcels()
@@ -105,27 +116,57 @@ def test_n1b_lot_split_on_arterial_03508109():
 
 
 def test_n1a_tract_options_21311502():
-    # 8625 Sardis Rd (thoroughfare), N1-A, vacant: 6.0154 ac = 262,032 sf gross;
-    # net buildable 3.3350 ac = 145,271 sf; usable = 145,271 x 0.70 = 101,690 sf; width 263.4
+    # 8625 Sardis Rd (thoroughfare), N1-A, vacant: 6.0154 ac = 262,032 sf gross; width 263.4,
+    # frontage 147.1. Sardis Branch crosses it ~1,000 ft back (pieces.csv): front piece 134,808 sf
+    # less 31,981 sf over 25% slope = 102,827 sf net, on Sardis Rd; back piece 44,634 - 2,205 =
+    # 42,429 sf net, reaching no street and no same-owner land, >= 10,000 sf: cut off.
+    # Confirmed 2026-10-28. Usable (front only) = 102,827 x 0.70 = 71,979 sf.
     r = y("21311502")
     assert not r["verify_acreage"]                                # assessor 5.98 ac: within 20%
     assert [r[f"cur_{t}"] for t in Y.TYPES] == [1, 2, 3, 4]
-    # split: 262,032 / 10,000 = 26; 263.4 / 70 = 3.8 -> 3 lots
-    assert r["split_lots"] == 3 and [r[f"split_{t}"] for t in Y.TYPES] == [3, 6, 9, 12]
-    assert r["sub_lots"] == 10                                    # 101,690 / 10,000 = 10.2
-    # conservation (>= 5 ac): least of gross 262,032 / 10,000 = 26 and usable 101,690 / 5,000 = 20.3
-    assert r["sub_conservation_lots"] == 20
-    # compact (>= 2 ac): 101,690 x 0.90 / 5,000 = 18.3 -> 18
-    assert r["sub_compact_lots"] == 18
-    # mixed income as N1-C: 101,690 / 6,000 = 16.9 -> 16 lots; bonus 16 - 10 = 6; affordable 3
-    assert (r["sub_mixed_income_lots"], r["sub_mixed_income_affordable_units"]) == (16, 3)
+    # split: 262,032 / 10,000 = 26; smaller of frontage 147.1 and width 263.4: 147.1 / 70 = 2.1 -> 2
+    assert r["split_lots"] == 2 and [r[f"split_{t}"] for t in Y.TYPES] == [2, 4, 6, 8]
+    assert r["net_sf"] == 102826.9 and r["cutoff_acres"] == pytest.approx(42428.9 / 43560, abs=1e-4)
+    assert r["creek_divides"] and not r["constraint_divides"] and not r["assemblage_access"]
+    assert r["sub_lots"] == 7                                     # 71,979 / 10,000 = 7.2
+    # conservation (>= 5 ac): least of gross 262,032 / 10,000 = 26 and usable 71,979 / 5,000 = 14.4
+    assert r["sub_conservation_lots"] == 14
+    # compact (>= 2 ac): 71,979 x 0.90 / 5,000 = 12.96 -> 12
+    assert r["sub_compact_lots"] == 12
+    # mixed income as N1-C: 71,979 / 6,000 = 11.996 -> 11 lots; bonus 11 - 7 = 4; affordable max(2, 2) = 2
+    assert (r["sub_mixed_income_lots"], r["sub_mixed_income_affordable_units"]) == (11, 2)
     ob = json.loads(r["obligations"])
-    assert ob["mixed_income"]["bonus_lots"] == 6 and ob["mixed_income"]["affordable_units"] == 3
+    assert ob["mixed_income"]["bonus_lots"] == 4 and ob["mixed_income"]["affordable_units"] == 2
     assert ob["conservation"]["conservation_area_pct"] == 40 and ob["compact"]["common_open_space_pct"] == 10
-    # N1-F rezoning: coverage 40%: 101,690 x 0.4 / 880 = 46.2 -> 46; open space 101,690 / 1,130 = 89
-    assert (r["townhome_units"], r["townhome_target_district"]) == (46, "N1-F")
+    # Townhome is not allowed in N1-A: this is the speculative N1-F rezoning yield (Neighborhood 1).
+    # coverage 40%: 71,979 x 0.4 / 880 = 32.7 -> 32; open space 71,979 / 1,130 = 63
+    assert (r["townhome_units"], r["townhome_needs_rezoning"], r["townhome_target_district"]) == (32, True, "N1-F")
+    assert r["townhome_speculative"]
+    # If the creek were crossed: 102,826.9 + 42,428.9 = 145,255.8 sf net; usable 101,679
+    assert r["if_crossed_net_sf"] == 145255.8
+    assert [r[f"if_crossed_{c}"] for c in Y.NET_OPTIONS] == [10, 20, 18, 16, 46]
     assert r["multi_dwelling_possible"] and r["reduced_depth_possible"] and r["setback_varies"]
     assert "compact: check airport 65 DNL" in r["notes"]
+
+
+def test_pieces_below_min_lot_get_no_yield_21311502():
+    # Raise the minimum lot past the back piece (42,429 sf): it is no longer cut off, and with the
+    # land in 2 pieces neither piece below the minimum gets yield. 50,000 sf: front 102,827 counts.
+    pieces = P["21311502"]["pieces"]
+    land = Y.piece_land(pieces, 50_000, True)
+    assert land == {"reachable_sf": 102826.9, "cutoff_sf": 0, "creek": True}
+    # 110,000 sf: neither piece counts
+    assert Y.piece_land(pieces, 110_000, True)["reachable_sf"] == 0
+    # no frontage and nothing reaches it: not divided, every counted piece stays (no_frontage)
+    unreached = [x | {"touches_street": False} for x in pieces]
+    assert Y.piece_land(unreached, 10_000, False) == {"reachable_sf": 145255.8, "cutoff_sf": 0, "creek": True}
+
+
+def test_parcels_without_pieces_keep_their_own_net():
+    for pin in ("02522236", "02708315", "02763166", "02918135", "03508109"):
+        r = y(pin)
+        assert r["net_sf"] == round(min(P[pin]["net_buildable_acres"] * 43_560, r["area_sf"]), 1)
+        assert r["cutoff_acres"] is None and r["if_crossed_sub_lots"] is None and not r["creek_divides"]
 
 
 def test_n2b_townhome_by_right_02918135():
@@ -171,7 +212,8 @@ def test_store_in_parcel_yield():
     with engine.begin() as conn:
         conn.execute(text(f"DROP SCHEMA IF EXISTS {s} CASCADE; CREATE SCHEMA {s}"))
     try:
-        df = Y.build_frame(pd.DataFrame(list(P.values())), RULES, CFG)
+        df = Y.build_frame(pd.DataFrame([{k: v for k, v in p.items() if k != "pieces"} for p in P.values()]),
+                           _pieces(), RULES, CFG)
         assert Y.store(df, engine, date(2026, 10, 28), s)["added"] == 6
         assert Y.store(df, engine, date(2026, 11, 4), s) == {"added": 0, "changed": 0, "removed": 0, "current": 6}
         with engine.connect() as conn:

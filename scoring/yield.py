@@ -16,8 +16,9 @@ Per parcel (one row, keyed by pin; history in parcel_yield_history):
   vacant and could be combined with the same owner's adjoining vacant land into a conforming
   lot (combine_required: no standalone yield, UDO 38.8.B). New lots (splits, subdivisions)
   must conform.
-- split_lots / split_<type>: conforming lots the parcel divides into (by gross area and by lot
-  width), and per-type units on those lots. 1 = no split possible.
+- split_lots / split_<type>: conforming lots the parcel divides into (by gross area and by the
+  smaller of frontage and lot width, since every new lot needs the street), and per-type units on
+  those lots. 1 = no split possible; 0 = the lot itself does not conform.
 - sub_lots: standard subdivision, NET buildable acres x usable_ratio / min lot size.
   sub_conservation_lots, sub_compact_lots, sub_mixed_income_lots: the UDO 4.5 options, each
   only where the district offers it and the site qualifies; their obligations are in
@@ -25,6 +26,17 @@ Per parcel (one row, keyed by pin; history in parcel_yield_history):
 - townhome_units: by right where allowed; otherwise the rezoning yield in the district the
   2040 Policy Map place type points to (needs_rezoning, speculative, target stored).
 - adu_allowed: yes/no only (it adds value to the main unit; never a unit to sell).
+- Buildable pieces (parcel_pieces, features/pieces.py): where a creek or other unbuildable area
+  cuts off buildable land that reaches no street and no same-owner neighbor, and that land is at
+  least the district's minimum lot, the subdivision and townhome yields use only the reachable
+  pieces' net land (slope measured per piece); where the land is in 2+ pieces, only pieces of at
+  least the district's minimum lot get yield. The cut-off land is in cutoff_acres, flagged
+  creek_divides (a mapped stream runs through the cut) or constraint_divides, and if_crossed_*
+  holds the yields with every piece (a crossing would be needed; RLV values it, never as the
+  by-right best use). Smaller cut-off pieces are ignored. A parcel with no frontage and no
+  reachable piece is not "divided" (it is no_frontage). assemblage_access: a piece of at least
+  a minimum lot reaches the land only through a same-owner neighbor. The lot as it is and lot
+  splits stay on gross area (zoning measures the whole lot).
 - Flags: no_frontage, setback_varies, reduced_depth_possible, multi_dwelling_possible,
   arterial_frontage, apartments_possible, verify_acreage; site_plan_governs or no_zoning_rule
   when there is no by-right yield (all yield columns NULL). `notes` lists checks to make by
@@ -62,14 +74,19 @@ COLUMNS = [
     "no_frontage", "setback_varies", "reduced_depth_possible", "multi_dwelling_possible", "arterial_frontage",
     "apartments_possible", "verify_acreage", "site_plan_governs", "no_zoning_rule",
     "nonconforming_lot", "combine_required",
+    "cutoff_acres", "creek_divides", "constraint_divides", "assemblage_access",
+    "if_crossed_net_sf", "if_crossed_sub_lots", "if_crossed_sub_conservation_lots", "if_crossed_sub_compact_lots",
+    "if_crossed_sub_mixed_income_lots", "if_crossed_townhome_units",
     "obligations", "notes",
 ]
+NET_OPTIONS = ["sub_lots", "sub_conservation_lots", "sub_compact_lots", "sub_mixed_income_lots", "townhome_units"]
 INT_COLS = [*[f"cur_{t}" for t in TYPES], "split_lots", *[f"split_{t}" for t in TYPES], "sub_lots",
             "sub_conservation_lots", "sub_compact_lots", "sub_mixed_income_lots",
-            "sub_mixed_income_affordable_units", "townhome_units"]
+            "sub_mixed_income_affordable_units", "townhome_units", *[f"if_crossed_{c}" for c in NET_OPTIONS]]
 BOOL_COLS = ["townhome_needs_rezoning", "townhome_speculative", "adu_allowed", "no_frontage", "setback_varies",
              "reduced_depth_possible", "multi_dwelling_possible", "arterial_frontage", "apartments_possible",
-             "verify_acreage", "site_plan_governs", "no_zoning_rule", "nonconforming_lot", "combine_required"]
+             "verify_acreage", "site_plan_governs", "no_zoning_rule", "nonconforming_lot", "combine_required",
+             "creek_divides", "constraint_divides", "assemblage_access"]
 
 
 def _allowed(e: dict | None) -> bool:
@@ -155,6 +172,79 @@ def type_conditions(e: dict, p: dict) -> tuple[bool, list[str]]:
     return True, []
 
 
+def reachable(piece: dict) -> bool:
+    return bool(piece["touches_street"] or piece["touches_same_owner"])
+
+
+def piece_land(pieces: list[dict] | None, lot_sf: float, has_frontage: bool) -> dict | None:
+    """Net land by piece: {reachable_sf, cutoff_sf, creek}, or None when the parcel's own net
+    stands (no pieces, or a single piece nothing is cut from). Where the land is in 2+ pieces,
+    only pieces of at least lot_sf net get yield. Cut off = such a piece (or a lone piece of at
+    least lot_sf) reaching neither a street nor a same-owner neighbor, on a parcel that a street
+    or another piece does reach; a parcel nothing reaches keeps all its pieces (no_frontage)."""
+    if not pieces:
+        return None
+    counted = [x for x in pieces if x["net_sf"] >= lot_sf] if len(pieces) > 1 else pieces
+    reach = [x for x in counted if reachable(x)]
+    cut = [x for x in counted if not reachable(x) and x["net_sf"] >= lot_sf]
+    if not reach and not has_frontage:
+        reach, cut = counted, []
+    if len(pieces) == 1 and not cut:
+        return None
+    return {"reachable_sf": sum(x["net_sf"] for x in reach), "cutoff_sf": sum(x["net_sf"] for x in cut),
+            "creek": any(x["creek"] for x in pieces)}
+
+
+def net_options(p: dict, rules: dict, j: str, rule: dict, cfg: dict, lot_sf: float, area_sf: float,
+                net_sf: float) -> tuple[dict, dict, list[str]]:
+    """Subdivision and townhome yields on net_sf of buildable land: (values, obligations, notes)."""
+    y, th = cfg["yield"], cfg["townhome"]
+    width = p.get("lot_width_ft")
+    types, alts = rule["types"], rule.get("alternatives") or {}
+    v: dict = {"townhome_needs_rezoning": False, "townhome_speculative": False}
+    obligations: dict = {}
+    notes: list[str] = []
+    usable_sf = net_sf * y["usable_ratio"]
+    v["sub_lots"] = _floor(usable_sf / lot_sf)
+    acres = area_sf / SQFT_PER_ACRE
+    if (c := alts.get("conservation")) and acres >= c["min_site_acres"]:
+        reduced = lot_sf * (1 - c["lot_area_and_width_reduction_pct"] / 100)
+        v["sub_conservation_lots"] = min(_floor(area_sf / lot_sf), _floor(usable_sf / reduced))
+        obligations["conservation"] = {"conservation_area_pct": c["conservation_area_pct"],
+                                       "source": c["source"], "not_combined_with": c["not_combined_with"]}
+    if (c := alts.get("compact")) and acres >= c["min_parcel_acres"]:
+        v["sub_compact_lots"] = _floor(usable_sf * (1 - c["common_open_space_pct"] / 100) / c["min_lot_sf"])
+        obligations["compact"] = {"common_open_space_pct": c["common_open_space_pct"],
+                                  "max_lots_fronting_open_space_pct": c["max_lots_fronting_open_space_pct"],
+                                  "source": c["source"], "not_combined_with": c["not_combined_with"]}
+        notes.append("compact: check airport 65 DNL and critical/protected watershed exclusions")
+    if (c := alts.get("voluntary_mixed_income")) and acres >= c["min_site_acres"]:
+        target = district_rule(rules, j, c["develop_as"])
+        if target:
+            total = _floor(usable_sf / target["min_lot_sf"]["value"])
+            bonus = total - v["sub_lots"]
+            if bonus >= 1:
+                affordable = max(2, math.ceil(bonus / 2))
+                v["sub_mixed_income_lots"] = total
+                v["sub_mixed_income_affordable_units"] = affordable
+                obligations["mixed_income"] = {
+                    "develop_as": c["develop_as"], "bonus_lots": bonus, "affordable_units": affordable,
+                    "rule": c["affordable"], "source": c["source"], "not_combined_with": c["not_combined_with"]}
+
+    # Townhome: by right, or the rezoning yield in the place type's target district
+    if _allowed(types.get("townhome")):
+        v["townhome_units"] = townhome_units(rule, usable_sf, width, th)
+    else:
+        v["townhome_units"] = 0
+        tgt = (((rules.get("rezoning_targets") or {}).get(j) or {}).get("townhome") or {})
+        target_code = (tgt.get("by_place_type") or {}).get(p.get("place_type"))
+        target = district_rule(rules, j, target_code) if target_code else None
+        if (types.get("townhome") or {}).get("rezoning", {}).get("needs_rezoning") and target:
+            v |= {"townhome_units": townhome_units(target, usable_sf, width, th), "townhome_needs_rezoning": True,
+                  "townhome_target_district": target_code, "townhome_speculative": bool(tgt.get("speculative"))}
+    return v, obligations, notes
+
+
 def compute_yield(p: dict, rules: dict, cfg: dict) -> dict:
     """Yield for one parcel. `p` holds the parcel_features inputs (see INPUT_SQL)."""
     j, code = p["jurisdiction"], p["zone_code"]
@@ -190,15 +280,21 @@ def compute_yield(p: dict, rules: dict, cfg: dict) -> dict:
         return out
     out["yield_basis"] = "by_right"
     out["rule_source"] = rule.get("ordinance")
-    y, th = cfg["yield"], cfg["townhome"]
+    y = cfg["yield"]
     width = p.get("lot_width_ft")
-    types, alts = rule["types"], rule.get("alternatives") or {}
+    types = rule["types"]
     obligations: dict = {}
 
     # The lot as it is, and lot splits, per housing type
     lot_sf, lot_width = type_standards(rules, j, rule, "sfh") if _allowed(types.get("sfh")) else (
         rule["min_lot_sf"]["value"], rule["min_lot_width_ft"]["value"] or 0)
-    out["split_lots"] = lots(area_sf, width, lot_sf, lot_width)
+    # splits put every new lot on the street: the smaller of frontage and lot width
+    split_width = min(width, p["frontage_ft"]) if width and p.get("frontage_ft") else width or p.get("frontage_ft")
+
+    def split_n(t_lot: float, t_width: float) -> int:
+        return max(lots(area_sf, split_width, t_lot, t_width), 1)
+
+    out["split_lots"] = split_n(lot_sf, lot_width) if lots(area_sf, width, lot_sf, lot_width) else 0
     nc = (rules.get("nonconforming_lots") or {}).get(j) or {}
     adjoining = p.get("adjoining_vacant_sf") or 0
     for t in TYPES:
@@ -213,7 +309,7 @@ def compute_yield(p: dict, rules: dict, cfg: dict) -> dict:
         n = lots(area_sf, width, t_lot, t_width)
         if n >= 1:
             out[f"cur_{t}"] = e["units_per_building"]
-            out[f"split_{t}"] = n * e["units_per_building"]
+            out[f"split_{t}"] = split_n(t_lot, t_width) * e["units_per_building"]
         elif nc.get("buildable") and area_sf > 0 and envelope_fits(
                 standards_rule(rules, j, rule, t), width, p.get("lot_depth_ft"), y["min_envelope_ft"]):
             # an existing undersized lot (UDO 38.8.A), unless vacant and combinable (38.8.B)
@@ -230,45 +326,27 @@ def compute_yield(p: dict, rules: dict, cfg: dict) -> dict:
                 obligations[t] = {"affordable_units_per_building": req["affordable_units"],
                                   "ami_pct": req.get("affordable_ami_pct"), "years": req.get("affordable_years")}
 
-    # Subdivision options (NET buildable land)
-    usable_sf = net_sf * y["usable_ratio"]
-    out["sub_lots"] = _floor(usable_sf / lot_sf)
-    acres = area_sf / SQFT_PER_ACRE
-    if (c := alts.get("conservation")) and acres >= c["min_site_acres"]:
-        reduced = lot_sf * (1 - c["lot_area_and_width_reduction_pct"] / 100)
-        out["sub_conservation_lots"] = min(_floor(area_sf / lot_sf), _floor(usable_sf / reduced))
-        obligations["conservation"] = {"conservation_area_pct": c["conservation_area_pct"],
-                                       "source": c["source"], "not_combined_with": c["not_combined_with"]}
-    if (c := alts.get("compact")) and acres >= c["min_parcel_acres"]:
-        out["sub_compact_lots"] = _floor(usable_sf * (1 - c["common_open_space_pct"] / 100) / c["min_lot_sf"])
-        obligations["compact"] = {"common_open_space_pct": c["common_open_space_pct"],
-                                  "max_lots_fronting_open_space_pct": c["max_lots_fronting_open_space_pct"],
-                                  "source": c["source"], "not_combined_with": c["not_combined_with"]}
-        notes.append("compact: check airport 65 DNL and critical/protected watershed exclusions")
-    if (c := alts.get("voluntary_mixed_income")) and acres >= c["min_site_acres"]:
-        target = district_rule(rules, j, c["develop_as"])
-        if target:
-            total = _floor(usable_sf / target["min_lot_sf"]["value"])
-            bonus = total - out["sub_lots"]
-            if bonus >= 1:
-                affordable = max(2, math.ceil(bonus / 2))
-                out["sub_mixed_income_lots"] = total
-                out["sub_mixed_income_affordable_units"] = affordable
-                obligations["mixed_income"] = {
-                    "develop_as": c["develop_as"], "bonus_lots": bonus, "affordable_units": affordable,
-                    "rule": c["affordable"], "source": c["source"], "not_combined_with": c["not_combined_with"]}
+    # Buildable pieces: land a creek or other constraint cuts off from every street
+    pieces = p.get("pieces")
+    out["assemblage_access"] = any(not x["touches_street"] and x["touches_same_owner"] and x["net_sf"] >= lot_sf
+                                   for x in pieces or [])
+    land = piece_land(pieces, lot_sf, not out["no_frontage"])
+    if land:
+        net_sf = min(land["reachable_sf"], area_sf)
+        out["net_sf"] = round(net_sf, 1)
+    if land and land["cutoff_sf"]:
+        crossed_sf = min(land["reachable_sf"] + land["cutoff_sf"], area_sf)
+        out["if_crossed_net_sf"] = round(crossed_sf, 1)
+        out["cutoff_acres"] = round(land["cutoff_sf"] / SQFT_PER_ACRE, 4)
+        out["creek_divides" if land["creek"] else "constraint_divides"] = True
+        crossed, _, _ = net_options(p, rules, j, rule, cfg, lot_sf, area_sf, crossed_sf)
+        out |= {f"if_crossed_{c}": crossed.get(c) for c in NET_OPTIONS}
 
-    # Townhome: by right, or the rezoning yield in the place type's target district
-    if _allowed(types.get("townhome")):
-        out["townhome_units"] = townhome_units(rule, usable_sf, width, th)
-    else:
-        out["townhome_units"] = 0
-        tgt = (((rules.get("rezoning_targets") or {}).get(j) or {}).get("townhome") or {})
-        target_code = (tgt.get("by_place_type") or {}).get(p.get("place_type"))
-        target = district_rule(rules, j, target_code) if target_code else None
-        if (types.get("townhome") or {}).get("rezoning", {}).get("needs_rezoning") and target:
-            out |= {"townhome_units": townhome_units(target, usable_sf, width, th), "townhome_needs_rezoning": True,
-                    "townhome_target_district": target_code, "townhome_speculative": bool(tgt.get("speculative"))}
+    # Subdivision and townhome options (NET buildable land that reaches a street)
+    v, o, n = net_options(p, rules, j, rule, cfg, lot_sf, area_sf, net_sf)
+    out |= v
+    obligations |= o
+    notes += n
 
     out["adu_allowed"] = _allowed(types.get("adu")) and any(
         out[f"cur_{t}"] for t in (types["adu"].get("requires") or {}).get("accessory_to", []) if t in TYPES)
@@ -326,18 +404,26 @@ ORDER BY f.pin
 """
 
 
-def load_inputs(engine: Engine, cfg: dict, schema: str = "public") -> pd.DataFrame:
+PIECE_COLS = ["pin", "piece_no", "net_sf", "touches_street", "touches_same_owner", "creek"]
+
+
+def load_inputs(engine: Engine, cfg: dict, schema: str = "public") -> tuple[pd.DataFrame, pd.DataFrame]:
+    """(one row of inputs per parcel, parcel_pieces rows)"""
     y = cfg["yield"]
     params = {"arterial": y["arterial_thoroughfare"], "reach": y["arterial_reach_ft"], "radius": y["blockface_radius_ft"]}
     with engine.begin() as conn:
         for stmt in PREP_SQL:
             sql = stmt.format(s=schema)
             conn.execute(text(sql), {k: v for k, v in params.items() if f":{k}" in sql})
-        return pd.read_sql(text(INPUT_SQL.format(s=schema)), conn)
+        inputs = pd.read_sql(text(INPUT_SQL.format(s=schema)), conn)
+        pieces = pd.read_sql(text(f"SELECT {', '.join(PIECE_COLS)} FROM {schema}.parcel_pieces ORDER BY pin, piece_no"), conn)
+    return inputs, pieces
 
 
-def build_frame(inputs: pd.DataFrame, rules: dict, cfg: dict) -> pd.DataFrame:
-    records = [compute_yield({k: (None if pd.isna(v) else v) for k, v in r.items()}, rules, cfg)
+def build_frame(inputs: pd.DataFrame, pieces: pd.DataFrame, rules: dict, cfg: dict) -> pd.DataFrame:
+    by_pin = {pin: g.drop(columns="pin").to_dict("records") for pin, g in pieces.groupby("pin")}
+    records = [compute_yield({k: (None if pd.isna(v) else v) for k, v in r.items()} | {"pieces": by_pin.get(r["pin"])},
+                             rules, cfg)
                for r in inputs.to_dict("records")]
     df = pd.DataFrame(records, columns=COLUMNS)
     for c in INT_COLS:
@@ -370,7 +456,13 @@ def summary(df: pd.DataFrame) -> str:
              "  flags: " + ", ".join(f"{c} {int(df[c].sum()):,}" for c in
                                      ["no_frontage", "setback_varies", "reduced_depth_possible",
                                       "multi_dwelling_possible", "arterial_frontage", "verify_acreage",
-                                      "nonconforming_lot", "combine_required"])]
+                                      "nonconforming_lot", "combine_required", "creek_divides",
+                                      "constraint_divides", "assemblage_access"]),
+             f"  cut-off land: {df['cutoff_acres'].sum():,.0f} acres; by-right vs if crossed: subdivision lots "
+             f"{int(br.loc[br['if_crossed_sub_lots'].notna(), 'sub_lots'].sum()):,} vs "
+             f"{int(br['if_crossed_sub_lots'].sum()):,}, townhome units "
+             f"{int(br.loc[br['if_crossed_townhome_units'].notna(), 'townhome_units'].sum()):,} vs "
+             f"{int(br['if_crossed_townhome_units'].sum()):,}"]
     return "\n".join(lines)
 
 
@@ -380,15 +472,15 @@ def main() -> None:
     engine = get_engine()
     with engine.connect() as conn:
         as_of = conn.execute(text("SELECT max(valid_from) FROM parcel_features")).scalar_one()
-    inputs = load_inputs(engine, cfg)
-    df = build_frame(inputs, rules, cfg)
+    inputs, pieces = load_inputs(engine, cfg)
+    df = build_frame(inputs, pieces, rules, cfg)
     changes = store(df, engine, as_of)
     report = summary(df)
     with engine.begin() as conn:
         conn.execute(
             text("INSERT INTO ingest_runs (source, snapshot_date, source_file, snapshot_written, report) "
                  "VALUES ('parcel_yield', :d, :f, :w, CAST(:r AS jsonb))"),
-            {"d": as_of, "f": "parcel_features, parcels, streets; config/zoning_rules.yaml, config/scoring.yaml",
+            {"d": as_of, "f": "parcel_features, parcel_pieces, parcels, streets; config/zoning_rules.yaml, config/scoring.yaml",
              "w": bool(changes["added"] or changes["changed"] or changes["removed"]),
              "r": json.dumps({"summary": report, "changes": changes}, default=str)})
     print(report)
