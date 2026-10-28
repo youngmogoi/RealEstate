@@ -1,4 +1,4 @@
-.PHONY: up down test ingest ingest-nconemap zoning utilities constraints streets features changes weekly refresh-manual score digest
+.PHONY: up down test ingest ingest-nconemap zoning utilities constraints streets features changes weekly refresh-manual udo zoning-rules score digest
 
 .env:
 	cp .env.example .env
@@ -41,6 +41,12 @@ weekly: up
 
 refresh-manual:
 	uv run python -m ops.manual_refresh
+
+udo:
+	uv run python -m ingest.udo
+
+zoning-rules:
+	uv run python -m scoring.zoning_rules
 
 score:
 	@echo "score: not implemented yet" && exit 1

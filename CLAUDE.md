@@ -48,6 +48,21 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
 - Phase 2.4 deal routing (decided 2026-10-28): exclude government, utility, church/nonprofit,
   HOA and common-area parcels from routing. Keep them in the data with their flags
   (owner_type, land use, access_via_common_area), but never score them as opportunities.
+- Zoning rules (Phase 2.1, decided 2026-10-28; config/zoning_rules.yaml, check with
+  `make zoning-rules`, ordinances via `make udo` into data/raw/udo/ with manifest.csv):
+  townhome = UDO "Multi-Family Attached Unit". Yield is stored per housing type (sfh, duplex,
+  triplex, quadraplex), each only on lots meeting its own requirements; RLV picks the best.
+  Townhome rezoning yield uses the 2040 Policy Map place type (Neighborhood 2 -> N2-A,
+  Neighborhood 1 -> N1-F, else none) and is speculative. Site-plan districts (CD, MX-1/2/3,
+  legacy conditional): by-right yield null, flag site_plan_governs, petition number kept.
+- For RLV (Phase 2.3): an ADU adds value to the principal unit, never a sale unit; quadraplex
+  and mixed-income options carry affordability obligations stored with the yield;
+  conservation, compact and mixed-income are separate yield options; flag duplex/triplex
+  values when comps are thin.
+- OPEN QUESTION (2026-10-28, you are asking Charlotte zoning staff in writing): does a
+  multi-dwelling development (UDO 15.4.HHH, several principal buildings on one lot) need the
+  district minimum lot area per building? Until answered it is excluded from yield and only
+  flagged (multi_dwelling_possible).
 - Floodplain flag (decided 2026-10-27): 1% annual chance only (the community layer's 0.2%
   shapes are dropped), and open water (NWI lakes and ponds) is subtracted, since the FEMA
   layer has no zone codes and 40% of it lies over lakes.
