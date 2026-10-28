@@ -1,4 +1,4 @@
-.PHONY: up down test ingest ingest-nconemap zoning utilities constraints streets place-types features pieces changes weekly refresh-manual udo zoning-rules yield score digest
+.PHONY: up down test ingest cama ingest-nconemap zoning utilities constraints streets place-types features pieces changes weekly refresh-manual udo zoning-rules yield rlv score digest
 
 .env:
 	cp .env.example .env
@@ -14,6 +14,9 @@ test:
 
 ingest:
 	uv run python -m ingest.county_parcels
+
+cama:
+	uv run python -m ingest.cama
 
 ingest-nconemap:
 	uv run python -m ingest.nconemap_parcels
@@ -56,6 +59,9 @@ zoning-rules:
 
 yield:
 	uv run python -m scoring.yield
+
+rlv:
+	uv run python -m scoring.rlv
 
 score:
 	@echo "score: not implemented yet" && exit 1

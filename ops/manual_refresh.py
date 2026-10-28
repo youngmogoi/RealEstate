@@ -23,6 +23,7 @@ def manual_layers() -> list[tuple[str, str]]:
         ("Tax Parcel Boundaries", c["boundaries"]),
         ("Tax Parcel Ownership Data", c["owners"]),
         ("Tax Parcel Sales", c["sales"]),
+        ("Tax Parcel CAMA Data (CSV)", c["cama"]),
         ("City of Charlotte Zoning", z["charlotte"]),
         ("Unincorporated County & Towns Zoning (in the Tax bundle)", z["towns"]),
         ("Parcels with zoning and zipcode (cross-check)", z["county_check"]),

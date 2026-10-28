@@ -195,6 +195,11 @@ def piece_land(pieces: list[dict] | None, lot_sf: float, has_frontage: bool) -> 
             "creek": any(x["creek"] for x in pieces)}
 
 
+def mixed_income_affordable(bonus_lots: int) -> int:
+    """Affordable units for voluntary mixed income: 50% of the bonus lots, at least 2 (UDO 4.5.B)."""
+    return max(2, math.ceil(bonus_lots / 2))
+
+
 def net_options(p: dict, rules: dict, j: str, rule: dict, cfg: dict, lot_sf: float, area_sf: float,
                 net_sf: float) -> tuple[dict, dict, list[str]]:
     """Subdivision and townhome yields on net_sf of buildable land: (values, obligations, notes)."""
@@ -224,7 +229,7 @@ def net_options(p: dict, rules: dict, j: str, rule: dict, cfg: dict, lot_sf: flo
             total = _floor(usable_sf / target["min_lot_sf"]["value"])
             bonus = total - v["sub_lots"]
             if bonus >= 1:
-                affordable = max(2, math.ceil(bonus / 2))
+                affordable = mixed_income_affordable(bonus)
                 v["sub_mixed_income_lots"] = total
                 v["sub_mixed_income_affordable_units"] = affordable
                 obligations["mixed_income"] = {

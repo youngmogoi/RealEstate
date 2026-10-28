@@ -300,6 +300,7 @@ INDEXES = {
     "parcels": "USING gist (geom)",
     "parcel_owners": "(pin)",
     "parcel_sales": "(sale_date)",
+    "parcel_cama": "(pin)",
 }
 
 

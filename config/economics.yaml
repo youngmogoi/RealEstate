@@ -1,0 +1,99 @@
+# Residual land value (Phase 2.3, scoring/rlv.py, `make rlv`). Created 2026-10-28.
+# Values marked (draft) await your confirmation. Money is in dollars.
+#
+#   RLV per option = buildings x (sale price - build cost - soft costs - target profit)
+#                    + ADU premium - site work - obligations
+#
+# Blank (null) values: the three core costs are required; while any is blank, `make rlv` builds
+# the comps and sales ratios and then stops without computing RLV. Every other blank is left OUT
+# of the RLV it would apply to (never treated as 0 silently): that RLV is then an upper bound,
+# flagged rlv_incomplete, with the missing names in blank_inputs.
+
+costs:
+  build_cost_per_sf: null        # $ per heated sf, hard construction cost (you fill in)
+  soft_cost_pct: null            # % of build cost: design, permits, fees, financing, closing (you fill in)
+  target_profit_pct: null        # % of the sale price (you fill in)
+
+site_work:
+  sewer_per_ft: null             # $ per ft of sewer extension; used only where a sewer distance is known (none yet)
+  road_per_ft: null              # $ per ft of the parcel's street frontage; options that create lots or townhomes
+  stormwater_per_unit: null      # $ per unit; options that create lots or townhomes
+  slope_per_acre: null           # $ per acre of 15-25% slope on the parcel; every option
+  floodplain_per_unit: null      # $ per unit whose building falls in the 1% floodplain flag
+  creek_crossing: null           # $ per parcel, added to the if_crossed options only (CLAUDE.md, buildable pieces)
+  # Which options the per-frontage and per-unit items apply to. "lot_as_is" = building on the
+  # existing lot (cur_*); everything else creates lots or townhome units.
+  road_and_stormwater_on_lot_as_is: false      # (draft)
+
+obligations:
+  # Affordable units (quadraplex: 1 per building; voluntary mixed income: 50% of bonus lots, min 2)
+  # sell at no more than this. Obligation = affordable units x (market unit price - this), if > 0.
+  affordable_max_price: null     # $ per unit at 80% AMI (you get this from Charlotte Housing)
+  affordable_max_price_source: null
+  affordable_max_price_year: null
+
+adu_premium: null                # $ added to the main unit's price where an ADU is allowed (never a sale unit)
+
+comps:
+  # New-construction sales: arm's-length (blank validity code: no disqualification; blank has been
+  # ~40% of sales every year since 2018), price > 0, not sold as vacant, one building on the
+  # account, heated sf > 0, sold within window_months of the sales download, and
+  # 0 <= sale year - year built <= max_age_years. Of several such sales of one account, the latest.
+  window_months: 24
+  max_age_years: 2
+  radii_miles: [1, 2, 3]         # widen until min_comps
+  min_comps: 5                   # fewer than this even at the widest radius = thin_comps
+  # Sales outside this $/heated sf range are left out: lot sales recorded in the build year
+  # (e.g. $110,000 on a 3,598 sf duplex) and mixed-use outliers. (draft)
+  min_price_per_sf: 100
+  max_price_per_sf: 2000
+  # CAMA building type (largest building) for each comp product. Duplex, triplex and quadraplex
+  # share one pool, "plex": CAMA can't tell them apart (resunits is 0 or blank on most) and there
+  # were only 13 new ones in 24 months. A plex best use is flagged plex_pooled (and thin_comps
+  # when, as almost everywhere, fewer than min_comps lie within the widest radius).
+  products:
+    sfh: ["SINGLE FAMILY RESIDENTIAL"]
+    townhome: ["TOWNHOUSE"]
+    plex: ["DUPLEX-TRIPLEX-QUADRAPLEX"]
+
+house_size:
+  # Largest building zoning allows: footprint = the smaller of the setback envelope and max
+  # building coverage x lot area; floors = max height / story_height_ft, at most max_stories.
+  story_height_ft: 12            # (draft)
+  max_stories: 3                 # (draft)
+  # What the market supports: this percentile of the comps' heated sf (same comps as the price).
+  # Plex comps are whole buildings, so the cap is per building.
+  market_cap_percentile: 0.90    # (draft)
+
+sewer:
+  # CLAUDE.md "Unknown sewer" (decided 2026-10-27). Cases, in order:
+  #   known distance        -> sewer extension = distance x sewer_per_ft
+  #   served (proxy, low)   -> assumed served
+  #   unknown, in town      -> assumed served, flag verify_sewer
+  #   unknown, outside town -> scored without public sewer (septic: single-family on large lots
+  #                            only), with an "if sewer available" RLV reported beside it
+  # Septic lot size. (draft: confirm with Mecklenburg County Environmental Health)
+  septic_min_lot_sf: 43560
+  # A parcel whose sewer is only assumed (low confidence or unknown in town) and whose score
+  # exceeds this gets the flag sewer_unverified_high_score. (draft)
+  low_confidence_score_cap: 100000
+
+price:
+  # Price = asking price if listed (no listings source yet), else assessed value x sales ratio.
+  # Sales ratio = median sale price / current assessed value (total value of the account), from
+  # arm's-length sales in the last window_months, by municipality and land class (vacant =
+  # building value 0, as parcel_features.vacant; CAMA's VAC flag sits on ~7,800 accounts with a
+  # building, so it is not used). A sale counts only if the land class then and now agree
+  # (sold as vacant = vacant now) and, for improved, no building is newer than the sale year.
+  # Most specific group with at least min_sales: municipality + class, else countywide class,
+  # else countywide.
+  window_months: 24
+  min_sales: 20
+
+score:
+  # Never scored as opportunities (CLAUDE.md, Phase 2.4): RLV is still computed and stored, the
+  # score is left blank with excluded_reason.
+  exclude_owner_types: [government, church_nonprofit]
+  exclude_land_use_words: ["COMMON", "RIGHT OF WAY", "UTILITY", "AIR RIGHTS", "CEMETERY"]
+  exclude_access_via_common_area: true
+  top_n: 20

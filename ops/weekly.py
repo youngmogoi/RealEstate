@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 STEPS = [
     ("county parcels (manual files)", "ingest.county_parcels"),
+    ("county CAMA buildings (manual file)", "ingest.cama"),
     ("zoning (manual files)", "ingest.zoning"),
     ("street centerlines (download)", "ingest.streets"),
     ("2040 Policy Map place types (download)", "ingest.place_types"),
@@ -39,9 +40,10 @@ STEPS = [
     ("parcel features", "features.build"),
     ("buildable pieces (creek cuts, street access)", "features.pieces"),
     ("parcel yield", "scoring.yield"),
+    ("comps, sales ratios, residual land value", "scoring.rlv"),
     ("changes", "features.changes"),
 ]
-COUNT_TABLES = ["parcels", "parcel_owners", "parcel_sales", "parcel_zoning", "parcel_utilities", "parcel_constraints",
+COUNT_TABLES = ["parcels", "parcel_owners", "parcel_sales", "parcel_cama", "comp_sales", "parcel_rlv", "parcel_zoning", "parcel_utilities", "parcel_constraints",
                 "streets", "parcel_features", "parcel_pieces", "changes"]
 
 

@@ -72,6 +72,15 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   townhome yield use reachable pieces; cut-off land -> cutoff_acres, creek_divides or
   constraint_divides, and if_crossed_* yields. RLV adds a crossing cost (config) and values
   if_crossed, never as the by-right best use. Lot as it is and splits stay on gross area.
+- RLV (Phase 2.3, built 2026-10-28, `make rlv`, scoring/rlv.py, config/economics.yaml): comps =
+  arm's-length (blank validity code) new-construction sales (sold 0-2 years after year built, one
+  building, CAMA heated sf), median $/sf within 1 -> 2 -> 3 mi until 5 comps; products sfh,
+  townhome, plex (duplex/triplex/quadraplex pooled: CAMA can't tell them apart, 11 sales).
+  Every option's inputs are stored in parcel_rlv_options; `python -m scoring.rlv --explain <pin>`.
+  Blank costs are left out and flagged (blank_inputs, rlv_incomplete), never 0; while the three
+  core costs are blank the run builds comps and ratios only. Price = assessed x median sale/assessed
+  ratio by municipality and vacant/improved (vacant = building value 0), 20+ sales or broader.
+  Affordable units: capped sale price (affordable_max_price). ADU: flat premium on the main unit.
 - For RLV (Phase 2.3): an ADU adds value to the principal unit, never a sale unit; quadraplex
   and mixed-income options carry affordability obligations stored with the yield;
   conservation, compact and mixed-income are separate yield options; flag duplex/triplex
@@ -168,3 +177,12 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   5.2 to 7.3 GB while the database is 2.2 GB: the image never shrinks on its own.
 - This PC has 7 GB RAM and a small, nearly full C: drive. Load big files in chunks, and
   don't let Docker's disk fill up: it corrupted Postgres once.
+- 2026-10-28: a comps query joining 206k parcels to comps within 3 mi (80M pairs) sorted on disk
+  and filled C: (Docker crashed; Postgres recovered). Comps are now matched in Python (shapely
+  STRtree, batches) and the database has temp_file_limit = 3GB. Before a new big spatial join,
+  count its pairs. Freeing Docker's disk: `wsl -d docker-desktop -u root fstrim -av` first, then
+  stop Docker, `wsl --shutdown`, and diskpart `compact vdisk` (admin); without the trim, compact
+  frees nothing. 12.0 -> 5.9 GB that day.
+- CAMA (Tax Parcel CAMA Data, `make cama` -> parcel_cama): one row per building; heatedarea is
+  account-level (the houses' total, but not on apartment complexes). vacorimprov "VAC" sits on
+  ~7,800 accounts with a building: don't use it for vacant. resunits is 0/blank on most plexes.
