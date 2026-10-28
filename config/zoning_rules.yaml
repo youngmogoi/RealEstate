@@ -53,6 +53,10 @@
 #     status: confirmed
 #     housing: none
 #     source: "..."
+#   R-MH:
+#     status: unsupported          # deliberately not modeled: no yield, parcels flagged no_zoning_rule
+#     reason: "..."
+# Codes with a site-plan suffix such as (CD) need no entry here: the site plan governs.
 
 # How a zoning code is reduced to its base district. Suffixes are stripped from the end of the
 # code, with or without parentheses, in any order ("R-3(CD)(ANDO)", "R-17MF(CD)ANDO",

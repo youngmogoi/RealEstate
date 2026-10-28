@@ -2,6 +2,10 @@
 
 Run `make zoning-rules` (python -m scoring.zoning_rules) to list every district used by
 parcels that has no confirmed rule. It exits non-zero until the rules cover them all.
+
+A parcel is covered when its zone code carries a site-plan suffix such as (CD) (the site plan
+governs, so no district table is needed), or its base district has a confirmed rule, or a rule
+with status `unsupported` (deliberately not modeled: no yield, flag no_zoning_rule).
 """
 
 import re
@@ -16,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 RULES_PATH = ROOT / "config" / "zoning_rules.yaml"
 
 HOUSING = {"by_right", "site_plan", "none"}
+STATUSES = {"draft", "confirmed", "unsupported"}
 BY_RIGHT_FIELDS = ["min_lot_sf", "min_lot_width_ft", "setbacks_ft", "density"]
 HOUSING_TYPES = ["sfh", "duplex", "triplex", "quadraplex", "townhome", "adu"]
 ALLOWED = {"yes", "conditional", "no"}
@@ -84,8 +89,12 @@ def check_rule(rule: dict | None) -> list[str]:
     """Problems with one district's rule entry (empty list = usable)."""
     if not rule:
         return ["no rule"]
+    if rule.get("status") == "unsupported":
+        return [] if rule.get("reason") else ["unsupported needs a reason"]
     out = []
-    if rule.get("status") != "confirmed":
+    if rule.get("status") not in STATUSES:
+        out.append(f"status must be one of {sorted(STATUSES)}")
+    elif rule.get("status") != "confirmed":
         out.append(f"status is {rule.get('status')!r}, not confirmed")
     housing = rule.get("housing")
     if housing not in HOUSING:
@@ -110,16 +119,34 @@ def check_rule(rule: dict | None) -> list[str]:
     return out
 
 
+def rule_for(rules: dict, jurisdiction: str, code: str) -> tuple[str, dict | None, list[str]]:
+    """(base district, its rule or None, parcel flags) for one zone code.
+
+    Flags: site_plan_governs (site-plan suffix, or a site_plan rule) or no_zoning_rule (no usable
+    rule, including status unsupported); either means no by-right yield.
+    """
+    base, mods = parse_code(jurisdiction, code, rules["code_parsing"])
+    rule = ((rules.get("districts") or {}).get(jurisdiction) or {}).get(base)
+    if any(kind == "site_plan" for _, kind in mods) or (rule or {}).get("housing") == "site_plan":
+        return base, rule, ["site_plan_governs"]
+    if check_rule(rule) or rule.get("status") == "unsupported":
+        return base, rule, ["no_zoning_rule"]
+    return base, rule, []
+
+
 def validate(rules: dict, used: dict[tuple[str, str], int]) -> list[tuple[str, str, int, list[str]]]:
     """Check every (jurisdiction, zone code) used by parcels against the rules.
 
-    `used` maps (jurisdiction, zone_code) to a parcel count. Returns one row per base district
-    with problems: (jurisdiction, base, parcels, problems), largest first.
+    `used` maps (jurisdiction, zone_code) to a parcel count. Codes with a site-plan suffix need
+    no district rule. Returns one row per base district with problems:
+    (jurisdiction, base, parcels, problems), largest first.
     """
     parsing, districts = rules["code_parsing"], rules.get("districts") or {}
     bases: dict[tuple[str, str], int] = {}
     for (j, code), n in used.items():
-        base, _ = parse_code(j, code, parsing)
+        base, mods = parse_code(j, code, parsing)
+        if any(kind == "site_plan" for _, kind in mods):
+            continue
         bases[(j, base)] = bases.get((j, base), 0) + n
     targets = rules.get("rezoning_targets") or {}
     out = []
@@ -158,6 +185,11 @@ def main() -> None:
     problems = validate(rules, used)
     n_bases = len({(j, parse_code(j, c, rules["code_parsing"])[0]) for j, c in used})
     print(f"{len(used)} zone codes on parcels -> {n_bases} base districts; {unzoned} parcels have no district")
+    flags: dict[str, int] = {}
+    for (j, code), n in used.items():
+        for f in rule_for(rules, j, code)[2] or ["by_right_rule"]:
+            flags[f] = flags.get(f, 0) + n
+    print("  parcel-districts: " + ", ".join(f"{f} {n:,}" for f, n in sorted(flags.items())))
     if not problems:
         print("OK: every district used by parcels has a confirmed rule")
         return

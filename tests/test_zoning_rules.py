@@ -3,7 +3,7 @@
 
 import pytest
 
-from scoring.zoning_rules import check_rule, load_rules, parse_code, validate
+from scoring.zoning_rules import check_rule, load_rules, parse_code, rule_for, validate
 
 RULES = load_rules()
 P = RULES["code_parsing"]
@@ -62,15 +62,31 @@ def test_check_rule():
     assert check_rule({**BY_RIGHT, "min_lot_sf": {"value": 8000}}) == ["min_lot_sf has no source"]
     assert check_rule({"status": "confirmed", "housing": "none", "source": "UDO 2.2"}) == []
     assert check_rule({"status": "confirmed", "housing": "site_plan"}) == ["no source"]
+    assert check_rule({"status": "unsupported", "reason": "below the 90% cutoff"}) == []
+    assert check_rule({"status": "unsupported"}) == ["unsupported needs a reason"]
+    assert check_rule({**BY_RIGHT, "status": "maybe"}) == ["status must be one of ['confirmed', 'draft', 'unsupported']"]
 
 
 def test_validate_reports_districts_without_rules():
     rules = {"code_parsing": P, "districts": {"CHARLOTTE": {"N1-A": BY_RIGHT}}}
     used = {("CHARLOTTE", "N1-A"): 100, ("CHARLOTTE", "N1-A(HDO)"): 5, ("CHARLOTTE", "R-4(CD)"): 7,
-            ("CHARLOTTE", "R-4(CD)(ANDO)"): 3}
-    assert validate(rules, used) == [("CHARLOTTE", "R-4", 10, ["no rule"])]
-    rules["districts"]["CHARLOTTE"]["R-4"] = {"status": "confirmed", "housing": "site_plan", "source": "prior ord."}
+            ("CHARLOTTE", "R-4(CD)(ANDO)"): 3, ("CHARLOTTE", "R-4"): 2}
+    # (CD) parcels need no district rule (the site plan governs); the 2 plain R-4 parcels do
+    assert validate(rules, used) == [("CHARLOTTE", "R-4", 2, ["no rule"])]
+    rules["districts"]["CHARLOTTE"]["R-4"] = {"status": "unsupported", "reason": "below the cutoff"}
     assert validate(rules, used) == []
+
+
+def test_rule_for_flags():
+    rules = {"code_parsing": P, "districts": {"CHARLOTTE": {
+        "N1-A": BY_RIGHT, "R-4": {"status": "unsupported", "reason": "below the cutoff"},
+        "MX-2": {"status": "confirmed", "housing": "site_plan", "source": "UDO 1.4.C.1"}}}}
+    assert rule_for(rules, "CHARLOTTE", "N1-A(HDO)") == ("N1-A", BY_RIGHT, [])
+    assert rule_for(rules, "CHARLOTTE", "N1-A(CD)")[2] == ["site_plan_governs"]
+    assert rule_for(rules, "CHARLOTTE", "MX-2 INNOV")[2] == ["site_plan_governs"]
+    assert rule_for(rules, "CHARLOTTE", "R-4")[2] == ["no_zoning_rule"]
+    assert rule_for(rules, "CHARLOTTE", "R-5")[2] == ["no_zoning_rule"]          # no entry at all
+    assert rule_for(rules, "CHARLOTTE", "N1-B")[2] == ["no_zoning_rule"]
 
 
 def test_validate_needs_rezoning_target():
