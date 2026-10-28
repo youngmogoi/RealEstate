@@ -8,3 +8,23 @@ acreage:
   # Also score flagged parcels on the larger figure; list any it would move into
   # the top picks as "check acreage" in the weekly digest.
   upside_review: true
+
+yield:
+  # Phase 2.2 (scoring/yield.py). Values marked (draft) await your confirmation.
+  # Subdivision net usable land = 65-75% of net buildable acres (CLAUDE.md); the rest is
+  # streets, stormwater and open space.
+  usable_ratio: 0.70                 # (draft) midpoint
+  # Street classes (streets.thoroughfare) that count as arterials for quadraplex and the
+  # arterial setback rules: major and minor thoroughfares; collectors (EXCOLLMJ) are not.
+  arterial_thoroughfare: [EXMJTH, EXMINTH, EXMJTHC3C, C2EX, PROPMJTH, PROPMINTH]   # (draft)
+  arterial_reach_ft: 90              # lot line within this of an arterial centerline = arterial frontage (as frontage.buffer_major_ft)
+  # setback_varies flag (established blockface, Table 4-2 note 2), approximated: at least this
+  # many developed parcels (building value > 0) within this distance of the parcel.
+  blockface_radius_ft: 300           # (draft)
+  blockface_min_dwellings: 4         # UDO: 25% developed or at least 4 existing dwellings
+
+townhome:
+  # Product assumptions for townhome yield (not zoning). Units per building = max building
+  # length / unit width; footprint = width x depth, checked against building coverage.
+  unit_width_ft: 22                  # (draft)
+  unit_depth_ft: 40                  # (draft)

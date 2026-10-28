@@ -1,4 +1,4 @@
-.PHONY: up down test ingest ingest-nconemap zoning utilities constraints streets place-types features changes weekly refresh-manual udo zoning-rules score digest
+.PHONY: up down test ingest ingest-nconemap zoning utilities constraints streets place-types features changes weekly refresh-manual udo zoning-rules yield score digest
 
 .env:
 	cp .env.example .env
@@ -50,6 +50,9 @@ udo:
 
 zoning-rules:
 	uv run python -m scoring.zoning_rules
+
+yield:
+	uv run python -m scoring.yield
 
 score:
 	@echo "score: not implemented yet" && exit 1

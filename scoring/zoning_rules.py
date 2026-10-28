@@ -119,6 +119,13 @@ def check_rule(rule: dict | None) -> list[str]:
     return out
 
 
+def by_right_usable(rule: dict | None) -> bool:
+    """A by_right rule complete enough to compute yield from, confirmed or still draft."""
+    if not rule or rule.get("housing") != "by_right" or rule.get("status") not in ("confirmed", "draft"):
+        return False
+    return not [p for p in check_rule(rule) if not p.startswith("status is")]
+
+
 def rule_for(rules: dict, jurisdiction: str, code: str) -> tuple[str, dict | None, list[str]]:
     """(base district, its rule or None, parcel flags) for one zone code.
 

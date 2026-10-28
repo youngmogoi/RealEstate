@@ -55,6 +55,14 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   Townhome rezoning yield uses the 2040 Policy Map place type (Neighborhood 2 -> N2-A,
   Neighborhood 1 -> N1-F, else none) and is speculative. Site-plan districts (CD, MX-1/2/3,
   legacy conditional): by-right yield null, flag site_plan_governs, petition number kept.
+- Yield (Phase 2.2, `make yield`, scoring/yield.py -> parcel_yield; import it with
+  importlib since `yield` is a keyword): every option stored, no winner. Per type on the lot as
+  is (gross area, lot width), lot splits, subdivision (net buildable x usable_ratio / min lot)
+  plus conservation/compact/mixed-income with obligations, townhome by right or by place-type
+  rezoning (speculative), ADU yes/no. Draft rules are used too; rule_status is stored. Charlotte
+  districts below the 2026-10-28 cutoff are `unsupported` (no_zoning_rule); codes with (CD) etc.
+  are site_plan_governs. Arterial = thoroughfare classes in scoring.yaml (collectors excluded);
+  setback_varies approximates an established blockface by developed parcels within 300 ft.
 - For RLV (Phase 2.3): an ADU adds value to the principal unit, never a sale unit; quadraplex
   and mixed-income options carry affordability obligations stored with the yield;
   conservation, compact and mixed-income are separate yield options; flag duplex/triplex
