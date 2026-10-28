@@ -57,6 +57,10 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   logs/weekly_<date>_<time>.log (first line = STATUS; failures name the step and error).
   Takes ~20 min. County layers are manual: `make refresh-manual` lists them with their ages;
   the log warns when one is over 90 days old.
+- Disk check (config `weekly` in features.yaml): under 5 GB free on C: puts "DISK WARNING" on
+  line 2 of the log and shows a Windows notification; under 2.5 GB the run is skipped
+  (STATUS: FAILED at step 'disk space'). Fix: clear Downloads/Recycle Bin or compact Docker's
+  disk image (it grows but never shrinks).
 - Scheduled with Windows Task Scheduler (this PC is Windows; cron/launchd don't apply), Sundays
   22:00, via scripts/weekly.cmd (starts Docker Desktop if needed). The PC must be on and you
   logged in at that time.

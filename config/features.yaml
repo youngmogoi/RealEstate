@@ -72,3 +72,7 @@ changes:
 weekly:
   log_dir: logs
   manual_max_age_days: 90        # warn when a hand-downloaded layer is older than this
+  # Free space on the drive holding Docker's disk image (C:). A full disk corrupted Postgres once.
+  disk_warn_free_gb: 5           # below this: warning at the top of the log + Windows notification
+  disk_stop_free_gb: 2.5         # below this: skip the run (a run can grow the image by a few GB)
+  docker_disk_image: '%LOCALAPPDATA%\Docker\wsl\disk\docker_data.vhdx'
