@@ -49,6 +49,19 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   shapes are dropped), and open water (NWI lakes and ponds) is subtracted, since the FEMA
   layer has no zone codes and 40% of it lies over lakes.
 
+## Weekly refresh
+- `make weekly` reloads every source, rebuilds parcel_features, writes changes, and logs to
+  logs/weekly_<date>_<time>.log (first line = STATUS; failures name the step and error).
+  Takes ~30 min. County layers are manual: `make refresh-manual` lists them with their ages;
+  the log warns when one is over 90 days old.
+- Scheduled with Windows Task Scheduler (this PC is Windows; cron/launchd don't apply), Sundays
+  22:00, via scripts/weekly.cmd (starts Docker Desktop if needed). The PC must be on and you
+  logged in at that time.
+  - install: `schtasks /Create /TN "NC Land Weekly" /TR "\"C:\Users\josko\OneDrive\Documents\RealEstate\scripts\weekly.cmd\"" /SC WEEKLY /D SUN /ST 22:00 /F`
+  - check: `schtasks /Query /TN "NC Land Weekly" /V /FO LIST`
+  - run now: `schtasks /Run /TN "NC Land Weekly"`
+  - remove: `schtasks /Delete /TN "NC Land Weekly" /F`
+
 ## Lessons learned
 (append corrections here as we go)
 - 2026-10-26: NC OneMap's Mecklenburg parcels lag the county by months (the Jan 2026 file
@@ -89,5 +102,14 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   county-delineated wetlands, so it is a flag only (possible_unmapped_wetland_acres).
 - USGS 3DEP elevation (exportImage) returns meters and errors on tiles above ~2,000 px;
   the slope band raster is cached in data/raw/constraints/derived/.
+- 2026-10-27: street centerlines come from the city's map server (CountyData/Streets), which
+  accepts scripts. Lot lines sit 25-50 ft from centerlines, so frontage uses a 50 ft reach and
+  counts only lot-line segments roughly parallel to the street (side lines would add ~40 ft).
+  Two frontages that meet = corner lot; on opposite sides = through lot.
+- Geometry unions and float sums in parallel queries vary in the last bits run to run, which
+  breaks "rerun = zero changes". Every ST_Collect/sum feeding a stored value needs an ORDER BY.
+- There is no ETJ layer; etj_jurisdiction = zoning jurisdiction of an unincorporated parcel.
+  Year built is from the NC OneMap 2026-01-07 snapshot (the county files have none); heated
+  square feet has no source until "Tax Parcel CAMA Data" is downloaded.
 - This PC has 7 GB RAM and a small, nearly full C: drive. Load big files in chunks, and
   don't let Docker's disk fill up: it corrupted Postgres once.

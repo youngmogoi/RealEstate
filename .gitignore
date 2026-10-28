@@ -12,3 +12,6 @@ __pycache__/
 .venv/
 .pytest_cache/
 *.egg-info/
+
+# Weekly run logs
+logs/

@@ -238,7 +238,7 @@ def load_features(features: gpd.GeoDataFrame, engine: Engine, as_of: date, schem
 
 ASSIGN_SQL = """
 WITH per_layer AS (
-    SELECT pin, layer, ST_Area(ST_UnaryUnion(ST_Collect(g), 0.01)) / 43560 AS acres
+    SELECT pin, layer, ST_Area(ST_UnaryUnion(ST_Collect(g ORDER BY ST_XMin(g), ST_YMin(g), ST_Area(g)), 0.01)) / 43560 AS acres
     FROM {s}.constraint_hits GROUP BY pin, layer
 ),
 layers AS (
@@ -247,14 +247,16 @@ layers AS (
     FROM per_layer GROUP BY pin
 ),
 unb AS (
-    SELECT pin, ST_UnaryUnion(ST_Collect(g), 0.01) AS g FROM {s}.constraint_hits WHERE class = 'unbuildable' GROUP BY pin
+    SELECT pin, ST_UnaryUnion(ST_Collect(g ORDER BY layer, ST_XMin(g), ST_YMin(g), ST_Area(g)), 0.01) AS g
+    FROM {s}.constraint_hits WHERE class = 'unbuildable' GROUP BY pin
 ),
 flood AS (
-    SELECT pin, ST_UnaryUnion(ST_Collect(g), 0.01) AS g FROM {s}.constraint_hits
-    WHERE layer = ANY(:floodplain_layers) GROUP BY pin
+    SELECT pin, ST_UnaryUnion(ST_Collect(g ORDER BY layer, ST_XMin(g), ST_YMin(g), ST_Area(g)), 0.01) AS g
+    FROM {s}.constraint_hits WHERE layer = ANY(:floodplain_layers) GROUP BY pin
 ),
 water AS (
-    SELECT pin, ST_UnaryUnion(ST_Collect(g), 0.01) AS g FROM {s}.constraint_hits WHERE class = 'water' GROUP BY pin
+    SELECT pin, ST_UnaryUnion(ST_Collect(g ORDER BY ST_XMin(g), ST_YMin(g), ST_Area(g)), 0.01) AS g
+    FROM {s}.constraint_hits WHERE class = 'water' GROUP BY pin
 ),
 flood_net AS (
     -- floodplain outside the unbuildable area
@@ -262,12 +264,12 @@ flood_net AS (
     FROM flood f LEFT JOIN unb u USING (pin)
 ),
 streams AS (
-    SELECT p.pin, sum(ST_Length(ST_Intersection(p.geom, f.geom))) AS ft
+    SELECT p.pin, sum(ST_Length(ST_Intersection(p.geom, f.geom)) ORDER BY f.feature_id) AS ft
     FROM {s}.parcels p JOIN {s}.constraint_features f ON f.layer = 'streams' AND ST_Intersects(p.geom, f.geom)
     GROUP BY p.pin
 ),
 septic AS (
-    SELECT p.pin, f.rating, sum(ST_Area(ST_Intersection(p.geom, f.geom))) / 43560 AS acres
+    SELECT p.pin, f.rating, sum(ST_Area(ST_Intersection(p.geom, f.geom)) ORDER BY f.feature_id) / 43560 AS acres
     FROM {s}.parcels p
     JOIN {s}.parcel_utilities u ON u.pin = p.pin AND u.sewer_status <> 'served'
     JOIN {s}.constraint_features f ON f.layer = 'septic_soils' AND ST_Intersects(p.geom, f.geom)

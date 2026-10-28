@@ -1,0 +1,61 @@
+# Parcel features (features/build.py) and change detection (features/changes.py).
+# DRAFT 2026-10-27: values marked (draft) await your confirmation.
+
+streets:
+  # Charlotte/Mecklenburg street centerlines from the city's map server (scriptable)
+  url: https://gis.charlottenc.gov/arcgis/rest/services/CountyData/Streets/MapServer/0
+  download_dir: data/raw/streets
+  # Segments that give a lot no frontage
+  exclude_lifecycle: ["Proposed", "Retired"]
+  exclude_thoroughfare: ["EXFRY", "PROPFRY", "RAMP"]   # freeways and ramps: no driveway access
+  private_class: ["PV"]                               # private streets count, reported separately
+
+frontage:
+  # Boundary within this distance of a centerline is frontage. Lot lines sit 25-50 ft from
+  # centerlines (50-60 ft rights-of-way plus mapping offset); at 30 ft, 47,511 ordinary homes
+  # came out landlocked, at 50 ft 7,461 (decided 2026-10-27).
+  buffer_ft: 50
+  # A lot-line segment is frontage only if roughly parallel to the street: its two ends differ
+  # in distance from the centerline by at most this share of its length (0.5 = within ~30 deg).
+  # This keeps the first stretch of the side lot lines out of frontage.
+  parallel_ratio: 0.5
+  min_per_street_ft: 20          # (draft) a street counts as a frontage only above this length
+  corner_max_gap_ft: 15          # (draft) two streets' frontages this close = corner; farther apart = through lot
+  # (draft) Flag lot: 0 < frontage < flag_lot_max_frontage_ft AND frontage < this share of the lot's
+  # width (narrow at the street, wide behind). The width test keeps ordinary narrow townhome
+  # lots (median 22 ft frontage, 25 ft wide) out. Frontage 0 = landlocked.
+  flag_lot_max_frontage_ft: 35
+  flag_lot_max_frontage_to_width: 0.5
+
+teardown:
+  max_building_value_ratio: 0.20 # (draft) building / total value below this ...
+  built_before: 1970             # (draft) ... and built before this year
+
+owner_type_rules:
+  # (draft) Checked in order; the first rule whose words match (as whole words, upper case) and
+  # whose exclude phrases don't match decides. No match: individual. Entity suffixes come first,
+  # so "123 S CHURCH ST LLC" and "10 WEST REAL ESTATE LLC" are companies, not a church or an estate.
+  - type: llc_corporate
+    words: ["LLC", "L L C", "LP", "LLP", "LTD", "CORP", "CORPORATION", "COMPANY", "CO"]
+  - type: government
+    words: ["CITY OF", "TOWN OF", "COUNTY", "STATE OF", "UNITED STATES", "USA", "NC DEPT", "DEPARTMENT OF",
+            "BOARD OF EDUCATION", "AUTHORITY", "COMMISSION", "NCDOT"]
+  - type: church_nonprofit
+    words: ["CHURCH", "MINISTRIES", "MINISTRY", "TEMPLE", "MOSQUE", "SYNAGOGUE", "CONGREGATION", "DIOCESE",
+            "BAPTIST", "METHODIST", "METH", "PRESBYTERIAN", "EPISCOPAL", "EPISC", "CATHOLIC", "LUTHERAN",
+            "FOUNDATION", "ASSOCIATION", "ASSN", "SOCIETY", "LODGE", "CHARITY", "HABITAT"]
+  - type: estate_heirs
+    words: ["ESTATE", "EST OF", "HEIRS", "HEIR", "DECEASED"]
+    exclude: ["REAL ESTATE"]
+  - type: trust
+    words: ["TRUST", "TRUSTEE", "TRUSTEES", "TR", "REVOCABLE", "IRREVOCABLE"]
+  - type: llc_corporate
+    words: ["INC", "PARTNERS", "PARTNERSHIP", "HOLDINGS", "PROPERTIES", "REALTY", "INVESTMENTS", "DEVELOPMENT",
+            "BANK", "GROUP", "VENTURES", "ENTERPRISES", "HOMES", "BUILDERS"]
+
+changes:
+  value_change_pct: 10           # (draft) total value change above this % is a change
+
+weekly:
+  log_dir: logs
+  manual_max_age_days: 90        # warn when a hand-downloaded layer is older than this
