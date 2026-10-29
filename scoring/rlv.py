@@ -25,7 +25,9 @@ Tables (each versioned, history in <table>_history; see ingest/versioning.py):
    options (reported, never the best use), the "if sewer available" RLV, price, score and flags.
    Price = asking price if listed (no listings source yet), else assessed value x sales ratio.
    Score = best RLV - price; blank for parcels never scored (economics `score`), which keep an
-   exclusion_category; golf courses and clubs are also on redevelopment_watch.
+   exclusion_category (owner type, land use, common-area access, or county address uses: utility
+   sites, and parcels whose every occupiable address is institutional); golf courses and clubs are
+   also on redevelopment_watch. An institutional address beside other addresses is only flagged.
 
 House size (house model): the median heated sf of the nearby comps for the product, capped by
 zoning: footprint = the smaller of the setback envelope and max building coverage on the option's
@@ -40,6 +42,7 @@ import gc
 import importlib
 import json
 import math
+import re
 from datetime import date
 from pathlib import Path
 
@@ -91,7 +94,7 @@ PARCEL_COLS = {
     "land_price_group": "str", "land_price_sales": "int", "price": "float", "price_basis": "str", "score": "float",
     "exclusion_category": "str", "excluded_reason": "str", "redevelopment_watch": "bool",
     "existing_commercial_use": "bool", "addresses": "int", "occupiable_addresses": "int", "asset_address_uses": "str",
-    "utility_address": "bool",
+    "owner_name": "str", "occupiable_address_uses": "str", "utility_address": "bool", "institutional_address": "bool",
     "verify_sewer": "bool", "sewer_low_confidence": "bool", "sewer_assumed_new_units": "bool",
     "thin_comps": "bool", "comp_proxy": "bool", "lot_band_fallback": "bool", "over_project_cap": "bool",
     "rlv_incomplete": "bool",
@@ -751,7 +754,39 @@ def exclusion(p: dict, score_cfg: dict) -> tuple[str | None, str | None]:
     uses = asset_uses(p)
     if p.get("addresses") and not p.get("occupiable_addresses") and uses & set(score_cfg["utility_site_uses"]):
         return "utility_site", f"every county address is unoccupiable, incl. {', '.join(sorted(uses))}"
+    occupied = address_uses(p)
+    cats = institutional_categories(occupied, score_cfg)
+    if occupied and all(cats.get(u) for u in occupied) and not institutional_guarded(p, score_cfg):
+        first = next(c for c in score_cfg["institutional_address_uses"] if c in cats.values())
+        return first, f"every occupiable county address is institutional: {', '.join(sorted(occupied))}"
     return None, None
+
+
+def institutional_guarded(p: dict, score_cfg: dict) -> bool:
+    """A residential land use whose owner is not an institution: the institutional address use is
+    likely stale or a home business (economics score.institutional_guard), so flag, don't exclude."""
+    g = score_cfg["institutional_guard"]
+    lu = (p.get("land_use") or "").upper()
+    if not any(fnmatch.fnmatchcase(lu, pat) for pat in g["residential_land_uses"]):
+        return False
+    if p.get("owner_type") in g["institution_owner_types"]:
+        return False
+    words = "|".join(re.escape(w) for w in g["institution_owner_words"])
+    return not re.search(rf"\b(?:{words})\b", (p.get("owner_name") or "").upper())
+
+
+def address_uses(p: dict) -> set[str]:
+    """Uses of the parcel's occupiable (non-ASSET) county addresses ("USE CODE nn" where blank)."""
+    return set((p.get("occupiable_address_uses") or "").split("; ")) - {""}
+
+
+def institutional_categories(uses: set[str], score_cfg: dict) -> dict[str, str]:
+    """{address use: category} for the institutional ones among `uses` (first category wins)."""
+    out = {}
+    for cat, names in score_cfg["institutional_address_uses"].items():
+        for u in uses & set(names):
+            out.setdefault(u, cat)
+    return out
 
 
 def asset_uses(p: dict) -> set[str]:
@@ -819,7 +854,9 @@ def score_parcel(p: dict, comps: dict, rules: dict, econ: dict, scoring_cfg: dic
         "redevelopment_watch": category in econ["score"]["redevelopment_watch"], "existing_commercial_use": commercial,
         "addresses": p.get("addresses"), "occupiable_addresses": p.get("occupiable_addresses"),
         "asset_address_uses": p.get("asset_address_uses"),
+        "owner_name": p.get("owner_name"), "occupiable_address_uses": p.get("occupiable_address_uses"),
         "utility_address": bool(asset_uses(p) & set(econ["score"]["utility_address_uses"])),
+        "institutional_address": bool(institutional_categories(address_uses(p), econ["score"])) and not reason,
         "verify_sewer": basis == "assumed_in_town", "sewer_low_confidence": low_conf,
         "sewer_assumed_new_units": low_conf and adds_units(b, p),
         "thin_comps": bool(b and b["thin_comps"]), "comp_proxy": bool(b and b["comp_proxy"]),
@@ -838,7 +875,8 @@ SELECT y.*, f.site_address, f.municipality, f.in_municipal_limit, f.vacant, f.se
        f.building_value, f.lot_depth_ft, f.owner_type, f.land_use, f.access_via_common_area,
        c.septic_dominant_rating, h.existing_heated_sf, coalesce(h.puv_enrolled, false) AS puv_enrolled, h.deferred_value,
        coalesce(ad.addresses, 0) AS addresses, coalesce(ad.occupiable_addresses, 0) AS occupiable_addresses,
-       ad.asset_address_uses
+       ad.asset_address_uses, ad.occupiable_address_uses,
+       (SELECT min(owner_name) FROM {s}.parcel_owners o WHERE o.pin = y.pin) AS owner_name
 FROM {s}.parcel_yield y JOIN {s}.parcel_features f USING (pin)
 LEFT JOIN {s}.parcel_constraints c USING (pin)
 LEFT JOIN LATERAL (SELECT sum(heated_sf) AS existing_heated_sf, bool_or(exemption = :puv) AS puv_enrolled,
@@ -847,7 +885,10 @@ LEFT JOIN LATERAL (SELECT sum(heated_sf) AS existing_heated_sf, bool_or(exemptio
 LEFT JOIN LATERAL (SELECT count(*) AS addresses, count(*) FILTER (WHERE address_model IS DISTINCT FROM 'ASSET')
                           AS occupiable_addresses,
                           string_agg(DISTINCT address_use, '; ' ORDER BY address_use)
-                              FILTER (WHERE address_model = 'ASSET') AS asset_address_uses
+                              FILTER (WHERE address_model = 'ASSET') AS asset_address_uses,
+                          string_agg(DISTINCT coalesce(address_use, 'USE CODE ' || use_code), '; '
+                                     ORDER BY coalesce(address_use, 'USE CODE ' || use_code))
+                              FILTER (WHERE address_model IS DISTINCT FROM 'ASSET') AS occupiable_address_uses
                    FROM {s}.parcel_addresses a WHERE a.pin = y.pin) ad ON true
 WHERE y.yield_basis = 'by_right' AND y.pin BETWEEN :lo AND :hi
 ORDER BY y.pin
@@ -914,7 +955,7 @@ def _n(x, fmt: str = ",.0f") -> str:
 
 FLAG_COLS = ["verify_sewer", "sewer_low_confidence", "sewer_assumed_new_units", "thin_comps", "comp_proxy",
              "lot_band_fallback", "over_project_cap", "rlv_incomplete", "verify_acreage", "septic_soils_very_limited",
-             "puv_enrolled", "existing_commercial_use", "utility_address"]
+             "puv_enrolled", "existing_commercial_use", "utility_address", "institutional_address"]
 
 
 def explain(p: pd.Series, o: pd.Series | None, econ: dict) -> list[str]:

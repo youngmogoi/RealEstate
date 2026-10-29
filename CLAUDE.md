@@ -202,6 +202,11 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   "unoccupiable" = txt_model ASSET (meters, signs, utility, cell towers, also ADUs). A parcel whose
   every address is an ASSET with a utility use is a utility_site (not scored; 50 parcels, e.g.
   18924303 Thermal Rd); a utility address beside real ones is only flagged (utility_address).
+  Institutional address uses (decided 2026-10-28, economics score.institutional_address_uses): a parcel
+  whose every non-ASSET address is institutional (club, church = blank use code 71, day care, school,
+  nursing home, public, park/pool ...) is excluded, unless its land use is residential and its owner is
+  not an institution (guard: address uses go stale, e.g. new houses on 1700-1800 Rama Rd still say OTHER
+  INSTITUTIONAL; home day cares). Guarded or mixed parcels are flagged institutional_address. 81 / 101.
 - CAMA (Tax Parcel CAMA Data, `make cama` -> parcel_cama): one row per building; heatedarea is
   account-level (the houses' total, but not on apartment complexes). vacorimprov "VAC" sits on
   ~7,800 accounts with a building: don't use it for vacant. resunits is 0/blank on most plexes.

@@ -182,10 +182,39 @@ score:
   # address next to real ones is only flagged (utility_address).
   utility_site_uses: ["UTILITY", "LIFT STATION"]
   utility_address_uses: ["UTILITY", "LIFT STATION", "CELL TOWER"]
+  # Institutional address uses (Master Address txt_cdeuse; decided 2026-10-28). A parcel whose every
+  # occupiable (non-ASSET) address has one of these uses is excluded under that category (the
+  # first listed when several match); one beside a residential or other address is only flagged
+  # (institutional_address). Use code 71 has no description in the file; its owners are churches
+  # (661 of 893 named church/baptist/ministry...), so it is matched as "USE CODE 71".
+  institutional_address_uses:
+    club: ["CLUB-LODGE", "COUNTRY CLUB", "MARINA"]
+    church_nonprofit: ["USE CODE 71", "ORPHANAGE"]
+    private_school: ["SCHOOL:COLLEGE-PRIVATE", "DAY CARE"]
+    healthcare: ["NURSING HOME", "HOSPITAL-PRIVATE", "PUBLIC HOSPITAL"]
+    government: ["PUBLIC SCHOOL", "PUBLIC COLLEGE", "OTHER COUNTY", "OTHER FEDERAL", "OTHER MUNICIPAL",
+                 "OTHER STATE", "MILITARY", "AIRPORT"]
+    cemetery: ["MORTUARY-CEMETERY"]
+    institutional_other: ["OTHER INSTITUTIONAL", "LAB/RESEARCH"]
+    park_recreation: ["FOREST-PARK", "NATURE PRESERVE", "NATURE CENTER", "RECREATION CENTER", "POOL"]
+  # Guard: address uses go stale (houses built on old church or institutional land keep the old use)
+  # and home day cares are still houses. On a residential land use, an institutional-only parcel is
+  # excluded only when its owner is an institution: owner type church_nonprofit or government, or
+  # one of these whole words in the owner name. Otherwise it is flagged (institutional_address).
+  institutional_guard:
+    residential_land_uses: ["SINGLE FAMILY*", "TOWN HOUSE*", "TOWNHOUSE*", "RURAL HOMESITE", "USE VALUE HOMESITE",
+                            "MOBILE HOME*", "RESIDENTIAL*", "MULTI FAMILY DUPLEX/TRIPLEX"]
+    institution_owner_types: [church_nonprofit, government]
+    institution_owner_words: ["CHURCH", "IGLESIA", "MINISTERIO", "PRAYER", "ASSEMBLY", "FELLOWSHIP", "WORSHIP",
+                              "GOSPEL", "BIBLE", "CHAPEL", "TABERNACLE", "APOSTOLIC", "ISLAMIC", "MASJID",
+                              "JEHOVAHS", "BAHA`IS", "SIKH", "HINDU", "BUDDHIST", "FRIENDS MEETING", "CLUB",
+                              "SCHOOL", "ACADEMY", "SCHOLARS", "LEARNING", "CHILDREN", "KIDS", "COUNCIL",
+                              "LIBRARY", "COMMISION", "CONSERVANCY"]
   # Flag existing_commercial_use (still scored) where one of these land uses sits on residential
   # zoning (every parcel with by-right housing yield).
   commercial_land_uses: ["COMMERCIAL*", "INDUSTRIAL*", "OFFICE*", "RETAIL*", "RESTAURANT*", "WAREHOUSE*",
                          "SERVICE*", "DAY CARE CENTER", "MINING"]
-  # Excluded categories kept on a separate list (parcel_rlv.redevelopment_watch)
+  # Excluded categories kept on a separate list (parcel_rlv.redevelopment_watch), from land use or
+  # address use alike
   redevelopment_watch: [golf_course, club]
   top_n: 20
