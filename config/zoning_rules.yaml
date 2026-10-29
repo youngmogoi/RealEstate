@@ -243,6 +243,7 @@ districts:
           setbacks_ft: {front: 10, corner_side: 10, side: 5, rear: 15}
           rear_alley_option: "rear 5 ft if all parking and garages are alley-loaded and the front setback grows 5 ft (Table 4-8 note 1)"
           max_building_coverage_pct: null   # Table 4-8 row G is blank
+          max_height_ft: {value: 48, source: "UDO 4.5.C.2.a.v"}   # replaces the district's height
           common_open_space_pct: 10      # plus the base 15% green area (20.15.D)
           max_lots_fronting_open_space_pct: 30
           excluded: "airport 65 DNL contour; critical and protected watershed areas (Article 23)"
@@ -373,6 +374,7 @@ districts:
           setbacks_ft: {front: 10, corner_side: 10, side: 5, rear: 10}
           rear_alley_option: "rear 5 ft if all parking and garages are alley-loaded and the front setback grows 5 ft (Table 4-8 note 1)"
           max_building_coverage_pct: null   # Table 4-8 row G is blank
+          max_height_ft: {value: 48, source: "UDO 4.5.C.2.a.v"}   # replaces the district's height
           common_open_space_pct: 10      # plus the base 15% green area (20.15.D)
           max_lots_fronting_open_space_pct: 30
           excluded: "airport 65 DNL contour; critical and protected watershed areas (Article 23)"
@@ -503,6 +505,7 @@ districts:
           setbacks_ft: {front: 5, corner_side: 5, side: 5, rear: 10}
           rear_alley_option: "rear 5 ft if all parking and garages are alley-loaded and the front setback grows 5 ft (Table 4-8 note 1)"
           max_building_coverage_pct: null   # Table 4-8 row G is blank
+          max_height_ft: {value: 48, source: "UDO 4.5.C.2.a.v"}   # replaces the district's height
           common_open_space_pct: 10      # plus the base 15% green area (20.15.D)
           max_lots_fronting_open_space_pct: 30
           excluded: "airport 65 DNL contour; critical and protected watershed areas (Article 23)"
@@ -625,6 +628,7 @@ districts:
           setbacks_ft: {front: 5, corner_side: 5, side: 5, rear: 10}
           rear_alley_option: "rear 5 ft if all parking and garages are alley-loaded and the front setback grows 5 ft (Table 4-8 note 1)"
           max_building_coverage_pct: null   # Table 4-8 row G is blank
+          max_height_ft: {value: 48, source: "UDO 4.5.C.2.a.v"}   # replaces the district's height
           common_open_space_pct: 10      # plus the base 15% green area (20.15.D)
           max_lots_fronting_open_space_pct: 30
           excluded: "airport 65 DNL contour; critical and protected watershed areas (Article 23)"

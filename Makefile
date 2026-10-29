@@ -1,4 +1,4 @@
-.PHONY: up down test ingest cama ingest-nconemap zoning utilities constraints streets place-types features pieces changes weekly refresh-manual udo zoning-rules yield rlv score digest
+.PHONY: up down test ingest cama addresses ingest-nconemap zoning utilities constraints streets place-types features pieces changes weekly refresh-manual udo zoning-rules yield rlv score digest
 
 .env:
 	cp .env.example .env
@@ -17,6 +17,9 @@ ingest:
 
 cama:
 	uv run python -m ingest.cama
+
+addresses:
+	uv run python -m ingest.addresses
 
 ingest-nconemap:
 	uv run python -m ingest.nconemap_parcels

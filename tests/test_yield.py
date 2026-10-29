@@ -115,6 +115,14 @@ def test_n1b_lot_split_on_arterial_03508109():
     assert r["reduced_depth_possible"] and r["adu_allowed"]
 
 
+def test_no_split_without_frontage_03508109():
+    # The same lot landlocked (frontage 0): no new lot can reach a street, so no split. Zero
+    # frontage used to fall back to the lot width (20918337 Riesman Ln got 6 lots).
+    r = Y.compute_yield(P["03508109"] | {"frontage_ft": 0.0}, RULES, CFG)
+    assert r["split_lots"] == 1 and [r[f"split_{t}"] for t in Y.TYPES] == [1, 2, 3, 4]   # one lot (arterial: quadraplex)
+    assert r["no_frontage"] and r["cur_sfh"] == 1
+
+
 def test_n1a_tract_options_21311502():
     # 8625 Sardis Rd (thoroughfare), N1-A, vacant: 6.0154 ac = 262,032 sf gross; width 263.4,
     # frontage 147.1. Sardis Branch crosses it ~1,000 ft back (pieces.csv): front piece 134,808 sf

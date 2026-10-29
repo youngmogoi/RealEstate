@@ -195,6 +195,15 @@ def piece_land(pieces: list[dict] | None, lot_sf: float, has_frontage: bool) -> 
             "creek": any(x["creek"] for x in pieces)}
 
 
+def split_frontage(width_ft: float | None, frontage_ft: float | None) -> float | None:
+    """Width available to new lots in a split: the smaller of lot width and street frontage. Zero
+    frontage (landlocked) means no split; it was once read as "unknown" and fell back to the width
+    (20918337 Riesman Ln, fixed 2026-10-28)."""
+    if frontage_ft is None:
+        return width_ft
+    return min(width_ft, frontage_ft) if width_ft is not None else frontage_ft
+
+
 def mixed_income_affordable(bonus_lots: int) -> int:
     """Affordable units for voluntary mixed income: 50% of the bonus lots, at least 2 (UDO 4.5.B)."""
     return max(2, math.ceil(bonus_lots / 2))
@@ -294,7 +303,7 @@ def compute_yield(p: dict, rules: dict, cfg: dict) -> dict:
     lot_sf, lot_width = type_standards(rules, j, rule, "sfh") if _allowed(types.get("sfh")) else (
         rule["min_lot_sf"]["value"], rule["min_lot_width_ft"]["value"] or 0)
     # splits put every new lot on the street: the smaller of frontage and lot width
-    split_width = min(width, p["frontage_ft"]) if width and p.get("frontage_ft") else width or p.get("frontage_ft")
+    split_width = split_frontage(width, p.get("frontage_ft"))
 
     def split_n(t_lot: float, t_width: float) -> int:
         return max(lots(area_sf, split_width, t_lot, t_width), 1)

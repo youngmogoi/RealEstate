@@ -301,6 +301,7 @@ INDEXES = {
     "parcel_owners": "(pin)",
     "parcel_sales": "(sale_date)",
     "parcel_cama": "(pin)",
+    "parcel_addresses": "(pin)",
 }
 
 

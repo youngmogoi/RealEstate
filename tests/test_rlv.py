@@ -40,9 +40,15 @@ ECON = copy.deepcopy(R.load_config()[0]) | {
 }
 ECON["house_size"] = {"story_height_ft": 12, "max_stories": 3}
 ECON["sewer"] = {"septic_min_lot_sf": 43560}
+ECON["rollback_tax"] = ECON["rollback_tax"] | {"tax_rate_per_100": {"CHARLOTTE": 1.0}}
+EDGES = ECON["comps"]["lot_bands_sf"]                 # 0, 5000, 8000, 12000, 20000, 43560
+SFH = {"radius_mi": 1, "comp_count": 12, "median_price_per_sf": 250.0, "median_sale_price": 750000.0,
+       "median_heated_sf": 3000.0, "thin_comps": False}
 COMPS = {
-    "sfh": {"radius_mi": 1, "comp_count": 12, "median_price_per_sf": 250.0, "median_sale_price": 750000.0,
-            "median_heated_sf": 3000.0, "thin_comps": False},
+    "sfh": SFH,
+    # the same comps in every lot-size band, so the per-house figures below hold for every lot
+    "lot": {b: SFH for b in R.band_labels(EDGES)},
+    "county_bands": {b: {"median_heated_sf": 2500.0} for b in R.band_labels(EDGES)},
     "townhome": {"radius_mi": 2, "comp_count": 8, "median_price_per_sf": 230.0, "median_sale_price": 506000.0,
                  "median_heated_sf": 2200.0, "thin_comps": False},
     "plex": {"radius_mi": 3, "comp_count": 3, "median_price_per_sf": 220.0, "median_sale_price": 700000.0,
@@ -247,14 +253,17 @@ def test_exclusions():
                                  ("CONDOMINIUM", "condominium", False),
                                  ("FUNERAL (MORTUARY, CEMETERY, CREMATORIUM, MAUS)", "cemetery", False),
                                  ("TOWN HOUSE COMMON AREA", "hoa_common_area", False),
-                                 ("UTILITY (GAS, ELECTRIC, TELEPHONE, TELEGRAPH, RAIL", "utility", False)]:
+                                 ("UTILITY (GAS, ELECTRIC, TELEPHONE, TELEGRAPH, RAIL", "utility", False),
+                                 ("NURSING HOME", "healthcare", False), ("HOME FOR THE AGED", "healthcare", False)]:
         row, _ = run("02763166", land_use=land_use)
         assert (row["exclusion_category"], row["redevelopment_watch"], row["score"]) == (cat, watch, None), land_use
     row, _ = run("02763166", owner_type="church_nonprofit")
     assert row["exclusion_category"] == "church_nonprofit" and row["best_rlv"] is not None
     for land_use in ("SINGLE FAMILY RESIDENTIAL - GOLF", "MULTI FAMILY DUPLEX/TRIPLEX"):   # homes, still scored
         row, _ = run("02763166", land_use=land_use)
-        assert row["exclusion_category"] is None and row["score"] is not None
+        assert row["exclusion_category"] is None and row["score"] is not None and not row["existing_commercial_use"]
+    row, _ = run("02763166", land_use="COMMERCIAL")       # flagged, still scored
+    assert row["existing_commercial_use"] and row["exclusion_category"] is None and row["score"] is not None
 
 
 def test_no_comps_gives_no_value():
@@ -295,6 +304,57 @@ def test_comps_widen_until_enough():
     b = df.loc[("B", "sfh")]
     assert (b["radius_mi"], b["comp_count"], b["thin_comps"]) == (3, 0, True) and pd.isna(b["median_price_per_sf"])
     assert df.loc[("A", "townhome"), "comp_count"] == 0
+
+
+def test_lot_bands():
+    assert R.band_labels(EDGES) == ["0-5000", "5000-8000", "8000-12000", "12000-20000", "20000-43560", "43560+"]
+    assert [R.lot_band(x, EDGES) for x in (4999, 5000, 12140.8, 262031.6)] == ["0-5000", "5000-8000", "12000-20000", "43560+"]
+    comps = pd.DataFrame({"product": ["sfh", "sfh", "sfh", "townhome"], "lot_sf": [6000, 7000, 50000, 2000],
+                          "price_per_sf": [300, 320, 200, 250], "heated_sf": [2000, 2200, 4000, 1800]})
+    t = R.county_bands(comps, EDGES).set_index("lot_band")
+    assert (t.loc["5000-8000", "sales"], t.loc["5000-8000", "median_heated_sf"]) == (2, 2100)
+    assert t.loc["0-5000", "sales"] == 0                 # townhomes are not counted
+
+
+def test_homes_priced_from_comps_on_similar_lots_21311502():
+    # Conservation lots are 5,000 sf: band 5000-8000. Nearby comps on such lots: $300/sf, median
+    # 2,000 sf -> home 2,000 x 300 = 600,000 (zoning allows 5,689 sf); finished lot 0.25 x 600,000.
+    comps = COMPS | {"lot": COMPS["lot"] | {"5000-8000": SFH | {"median_price_per_sf": 300.0, "median_heated_sf": 2000.0}}}
+    _, o = run("21311502", comps=comps)
+    c = o[("sub_conservation", "public")]
+    assert (c["lot_band"], c["lot_band_fallback"], c["size_sf"], c["home_price"], c["lot_price"]) == (
+        "5000-8000", False, 2000, 600000, 150000)
+    assert c["rlv"] == pytest.approx(14 * 150000 * F_(14) - 840000 - 147.1012 * 200 - 70000 - 23549.34 - 15000, abs=0.01)
+    # Only 3 such comps nearby: $/sf from all nearby single-family ($250), size from the band
+    # countywide (2,500 sf) -> home 625,000
+    thin = COMPS | {"lot": COMPS["lot"] | {"5000-8000": SFH | {"comp_count": 3}}}
+    _, o = run("21311502", comps=thin)
+    c = o[("sub_conservation", "public")]
+    assert (c["lot_band_fallback"], c["price_per_sf"], c["size_sf"], c["home_price"]) == (True, 250, 2500, 625000)
+    # the lot as it is (262,032 sf) is in the 43560+ band and keeps its own comps
+    assert o[("cur_sfh", "public")]["lot_band"] == "43560+" and not o[("cur_sfh", "public")]["lot_band_fallback"]
+
+
+def test_present_use_value_parcel_21311502():
+    # As if enrolled with $500,000 deferred: price = Charlotte 5+ ac land at $200,000/ac x 6.0154 ac;
+    # rollback at 1.00 per $100: 5,000 a year x (1 + 1.1025 + 1.1925 + 1.2825) = 22,887.50 (interest
+    # 2% + 0.75% a month for 11, 23 and 35 months) on every option
+    land = R.land_table(pd.DataFrame({"municipality": ["CHARLOTTE"] * 25, "acres": [10.0] * 25,
+                                      "per_acre": [200000.0] * 25}), ECON["land_price"]["acre_bands"], 20)
+    plain, _ = run("21311502")
+    row, o = R.score_parcel(parcel("21311502", puv_enrolled=True, deferred_value=500000), COMPS, RULES, ECON, CFG,
+                            RATIOS, land)
+    o = {(x["option"], x["sewer"]): x for x in o}
+    assert (row["price_basis"], row["land_price_group"], row["land_price_sales"]) == ("vacant_land_per_acre", "CHARLOTTE 5+ ac", 25)
+    assert row["price"] == pytest.approx(262031.6 / 43560 * 200000, abs=1)
+    assert o[("sub_conservation", "public")]["rollback_cost"] == pytest.approx(22887.5)
+    assert row["best_rlv"] == pytest.approx(plain["best_rlv"] - 22887.5, abs=0.01) and row["puv_enrolled"]
+    # a town without a land group falls back to the countywide band; a blank tax rate is flagged
+    econ = copy.deepcopy(ECON)
+    econ["rollback_tax"]["tax_rate_per_100"] = {}
+    row, o = R.score_parcel(parcel("21311502", puv_enrolled=True, deferred_value=500000, municipality="DAVIDSON"),
+                            COMPS, RULES, econ, CFG, RATIOS, land)
+    assert row["land_price_group"] == "ALL 5+ ac" and "rollback_tax_rate" in row["blank_inputs"]
 
 
 def test_store_and_rerun_without_changes():

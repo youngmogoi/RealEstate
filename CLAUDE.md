@@ -81,6 +81,20 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   core costs are blank the run builds comps and ratios only. Price = assessed x median sale/assessed
   ratio by municipality and vacant/improved (vacant = building value 0), 20+ sales or broader.
   Affordable units: capped sale price (affordable_max_price). ADU: flat premium on the main unit.
+  Decided 2026-10-28 (round 2-3): subdivisions use the lot model (lots x lot_to_home_ratio x home
+  price - development cost per lot); subdivisions and townhomes are discounted over sell-out
+  (absorption) and capped (max_lots_per_project); demolition per existing CAMA heated sf; splits
+  also get keep_house. Single-family homes are priced from comps on similar lot sizes
+  (lot_bands_sf): home = band $/sf x the house that fits the option's lot, capped by the band's
+  median sf. Plex units: townhome comps x duplex_discount (comp_proxy) until 20 real plex sales.
+  Present-use value land (CAMA exemption "AGRICULTURAL FLAG", 542 parcels): price = vacant land
+  $/acre by municipality and size band; rollback tax (current + 3 years with interest) on every
+  option. Never ranked: government, utility, church, HOA/common, golf, clubs, private schools,
+  apartments, condos, cemeteries, healthcare (golf and clubs on redevelopment_watch).
+  existing_commercial_use is flagged but scored. Sewer flag only when the best use adds units
+  on assumed sewer; the digest shows it for shortlisted parcels only.
+- Lot splits need frontage: zero frontage means no split (fixed 2026-10-28; 1,853 parcels had
+  split by lot width alone, e.g. landlocked 20918337 Riesman Ln).
 - For RLV (Phase 2.3): an ADU adds value to the principal unit, never a sale unit; quadraplex
   and mixed-income options carry affordability obligations stored with the yield;
   conservation, compact and mixed-income are separate yield options; flag duplex/triplex
@@ -183,6 +197,11 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   count its pairs. Freeing Docker's disk: `wsl -d docker-desktop -u root fstrim -av` first, then
   stop Docker, `wsl --shutdown`, and diskpart `compact vdisk` (admin); without the trim, compact
   frees nothing. 12.0 -> 5.9 GB that day.
+- 2026-10-29: Master Address Table ("Master Address - Active/Temporary Status", `make addresses` ->
+  parcel_addresses): txt_cdeuse = the property page's "Address Use"; ind_occup is always blank, and
+  "unoccupiable" = txt_model ASSET (meters, signs, utility, cell towers, also ADUs). A parcel whose
+  every address is an ASSET with a utility use is a utility_site (not scored; 50 parcels, e.g.
+  18924303 Thermal Rd); a utility address beside real ones is only flagged (utility_address).
 - CAMA (Tax Parcel CAMA Data, `make cama` -> parcel_cama): one row per building; heatedarea is
   account-level (the houses' total, but not on apartment complexes). vacorimprov "VAC" sits on
   ~7,800 accounts with a building: don't use it for vacant. resunits is 0/blank on most plexes.

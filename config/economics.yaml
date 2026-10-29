@@ -81,13 +81,21 @@ comps:
   max_price_per_sf: 2000
   # CAMA building type (largest building) for each comp product. Duplex, triplex and quadraplex
   # share one pool, "plex": CAMA can't tell them apart (resunits is 0 or blank on most).
+  # Lot-size matching (decided 2026-10-28): single-family homes are priced from comps on lots of
+  # a similar size. Band edges in sf of lot (the sold parcel's shape area); the last band is
+  # open-ended. An option's homes use the band of its own lot (the lot as is, a split lot, or the
+  # subdivision's lot). $/sf comes from the band's comps within the radii; where fewer than
+  # min_comps, from all nearby single-family comps (lot_band_fallback), and the house size cap from
+  # the band's countywide median. Townhomes (no lot of their own) and the plex proxy aren't banded.
+  lot_bands_sf: [0, 5000, 8000, 12000, 20000, 43560]
   products:
     sfh: ["SINGLE FAMILY RESIDENTIAL"]
     townhome: ["TOWNHOUSE"]
     plex: ["DUPLEX-TRIPLEX-QUADRAPLEX"]
 
 house_size:
-  # House size = the median heated sf of the nearby comps for that product (decided 2026-10-28),
+  # House size = the median heated sf of the nearby comps for that product (decided 2026-10-28;
+  # single-family: of the comps on similar lots),
   # capped by what zoning allows: footprint = the smaller of the setback envelope and max building
   # coverage x lot area, times floors = max height / story_height_ft, at most max_stories.
   story_height_ft: 12            # (confirmed 2026-10-28)
@@ -116,6 +124,37 @@ price:
   window_months: 24
   min_sales: 20
 
+land_price:
+  # Present-use value (decided 2026-10-28). Farm and forest land enrolled in NC present-use value
+  # (CAMA exemption "AGRICULTURAL FLAG"; 542 parcels in Oct 2026) is taxed on a fraction of its
+  # value, so assessed x ratio understates it. Its price = median vacant-land sale $ per acre for
+  # its municipality and size band x its acres; fewer than min_sales -> countywide band. Vacant
+  # land sales: arm's-length, sold as vacant, building value 0, one account on the parcel.
+  puv_exemption: AGRICULTURAL FLAG
+  window_months: 24
+  min_sales: 20
+  acre_bands: [0, 1, 5]          # under 1, 1-5, 5+ (5-20 had 32 sales and 20+ had 3 countywide)
+
+rollback_tax:
+  # Developing present-use land ends the deferral: the deferred taxes for the current year and
+  # the 3 before it come due, with interest (G.S. 105-277.4(c)). Deferred value = CAMA market value
+  # - taxable value, used for every year (an estimate). Interest per year i back (i = 0 current):
+  # 0, else first_month_pct + monthly_pct x (12 i - 1). Charged on every option of an enrolled parcel.
+  years: 4
+  interest_first_month_pct: 2
+  interest_monthly_pct: 0.75
+  # Combined county + municipal rate, $ per $100 of value, by parcel municipality (you fill in)
+  tax_rate_per_100:
+    CHARLOTTE: null
+    CORNELIUS: null
+    DAVIDSON: null
+    HUNTERSVILLE: null
+    MATTHEWS: null
+    MINT HILL: null
+    PINEVILLE: null
+    STALLINGS: null
+    MECKLENBURG COUNTY-UNINCORPORATED: null
+
 score:
   # Never scored or ranked (decided 2026-10-28; CLAUDE.md Phase 2.4): RLV is still computed and
   # stored, the score is left blank, excluded_reason names the category.
@@ -136,6 +175,17 @@ score:
     government: ["SCHOOL - PUBLIC", "RIGHT OF WAY", "AIR RIGHTS*"]
     utility: ["UTILITY*"]
     church_nonprofit: ["CHURCH"]
+    healthcare: ["NURSING HOME", "HOME FOR THE AGED", "*HOSPITAL*", "*ASSISTED LIVING*"]
+  # County Master Address Table (parcel_addresses, decided 2026-10-29). Addresses of model ASSET are
+  # the county's "unoccupiable" ones (meters, signs, utility, cell towers ...). A parcel whose every
+  # address is an ASSET and one of them is a utility use is a utility site: never scored. A utility
+  # address next to real ones is only flagged (utility_address).
+  utility_site_uses: ["UTILITY", "LIFT STATION"]
+  utility_address_uses: ["UTILITY", "LIFT STATION", "CELL TOWER"]
+  # Flag existing_commercial_use (still scored) where one of these land uses sits on residential
+  # zoning (every parcel with by-right housing yield).
+  commercial_land_uses: ["COMMERCIAL*", "INDUSTRIAL*", "OFFICE*", "RETAIL*", "RESTAURANT*", "WAREHOUSE*",
+                         "SERVICE*", "DAY CARE CENTER", "MINING"]
   # Excluded categories kept on a separate list (parcel_rlv.redevelopment_watch)
   redevelopment_watch: [golf_course, club]
   top_n: 20

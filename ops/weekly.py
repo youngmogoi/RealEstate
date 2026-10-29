@@ -31,6 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 STEPS = [
     ("county parcels (manual files)", "ingest.county_parcels"),
     ("county CAMA buildings (manual file)", "ingest.cama"),
+    ("county master addresses (manual file)", "ingest.addresses"),
     ("zoning (manual files)", "ingest.zoning"),
     ("street centerlines (download)", "ingest.streets"),
     ("2040 Policy Map place types (download)", "ingest.place_types"),

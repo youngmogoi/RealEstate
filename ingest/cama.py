@@ -17,6 +17,9 @@ Notes on the file (checked 2026-10-28 against that day's download; its metadata 
 - An account with no building has one row with blank building fields (building_count 0).
 - yearid 2027 marks ~6,800 accounts created in 2026 and not yet assessed (no building data).
 - resunits is 0 or blank on most new duplexes and triplexes, so it can't tell them apart.
+- totalvalue is the taxable value; totmarkval the market value. They differ where taxes are
+  deferred: exemption "AGRICULTURAL FLAG" marks present-use value (farm and forest) land, whose
+  taxable value is a fraction of market (22905699: $15,203 of $4,449,600).
 - The building fields below (bldg_type, year_built, ...) are the account's LARGEST building by
   finished area; year_built_newest / year_built_oldest span all of its buildings.
 """
@@ -46,6 +49,8 @@ ACCOUNT_FIELDS = {
     "totlandval": "land_value",
     "totalbldgval": "building_value",
     "totalvalue": "total_value",
+    "totmarkval": "market_value",
+    "exemption": "exemption",
 }
 BUILDING_FIELDS = {
     "bldgtype": "bldg_type",
@@ -60,7 +65,7 @@ BUILDING_FIELDS = {
     "finisharea": "finished_sf",
     "totalarea": "total_area_sf",
 }
-NUMERIC = ["tax_year", "heated_sf", "land_value", "building_value", "total_value", "year_built", "eff_year_built",
+NUMERIC = ["tax_year", "heated_sf", "land_value", "building_value", "total_value", "market_value", "year_built", "eff_year_built",
            "res_units", "bedrooms", "full_baths", "half_baths", "finished_sf", "total_area_sf"]
 INT_COLS = ["tax_year", "year_built", "eff_year_built", "year_built_newest", "year_built_oldest", "bedrooms",
             "full_baths", "half_baths", "res_units", "building_count"]

@@ -13,6 +13,7 @@ county:
   owners: data/raw/OwnerInfo_Table/OwnerInfo_Table.csv         # "Tax Parcel Ownership Data"
   sales: data/raw/Parcel_Sales_Table/Parcel_Sales_Table.csv    # "Tax Parcel Sales"
   cama: data/raw/CAMA/Cama_Table/Cama_Table.csv                # "Tax Parcel CAMA Data" (CSV), `make cama`
+  addresses: data/raw/MasterAddress/Master_Address_Table/Master_Address_Table.csv   # "Master Address - Active/Temporary Status" (CSV), `make addresses`
 
 # Zoning (Mecklenburg County Open Mapping). Charlotte's layer covers the city and its planning
 # area; the towns layer covers the six towns (plus a sliver of Stallings).
