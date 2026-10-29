@@ -1,9 +1,13 @@
 # Residual land value (Phase 2.3, scoring/rlv.py, `make rlv`). Created 2026-10-28.
 # Values marked (draft) await your confirmation. Money is in dollars.
 #
+# Draft cost values added 2026-10-28 from a Phoenix duplex build breakdown (2024, 3,000 sf,
+# $478,634) and its rules of thumb. Replace with my own Charlotte numbers as I get them.
+#
 # Two models (decided 2026-10-28):
 #   House model (lot as is, lot splits, townhomes):
-#     RLV = buildings x (sale price - build cost - soft costs - target profit) - absorption discount
+#     RLV = buildings x (sale price - build cost - soft costs - selling costs - financing
+#                        - target profit) - absorption discount
 #           + ADU premium + retained house - demolition - site work - obligations
 #   Lot model (subdivisions: standard, conservation, compact, mixed income, and their if_crossed):
 #     RLV = lots x finished lot price - absorption discount - lots x development cost per lot
@@ -17,10 +21,42 @@
 # an upper bound, flagged rlv_incomplete, with the missing names in blank_inputs.
 
 costs:
-  build_cost_per_sf: null        # $ per heated sf, hard construction cost (you fill in)
-  soft_cost_pct: null            # % of build cost: design, permits, fees, financing, closing (confirmed 2026-10-28)
-  target_profit_pct: null        # % of the sale price (confirmed 2026-10-28)
-  demo_cost_per_sf: null         # $ per existing heated sf (CAMA), on every option that removes a building
+  # $ per heated sf, hard construction cost incl. ~5% contingency, excl. land and demolition.
+  # Now per product type (was one value). (draft)
+  # Source: Phoenix duplex hard costs $111/sf + 5% contingency = $116; houses from the video's
+  # rule of thumb (~$140/sf all-in) / 1.13 soft costs = ~$124.
+  build_cost_per_sf:
+    sfh: 124
+    duplex_triplex: 116          # also used for quadraplex
+    townhome: 116                # assumed similar grade to duplex; confirm
+  # % of build cost: design/drafting, permits and impact fees, engineering and survey, soil test,
+  # utility tie-ins, insurance and builder's risk, property tax during the build, marketing,
+  # dumpsters, fencing, site security. Financing is now its own section below. (draft; Phoenix
+  # duplex $42,375 soft + builder's risk / $332,074 hard = 12.8%)
+  soft_cost_pct: 13
+  # % of the sale price, NET of selling costs and financing (both below). (draft; the Phoenix
+  # deal made ~23% of sales before selling and financing costs)
+  target_profit_pct: 15
+  # $ per existing heated sf (CAMA), on every option that removes a building. (draft; Phoenix
+  # $10,850 to demolish a 1950s house plus old asphalt/concrete on 1/3 acre, assuming ~1,300 sf)
+  demo_cost_per_sf: 8
+
+selling:
+  # % of the sale price: agent commissions + seller closing costs, on every unit sold. (draft)
+  selling_cost_pct: 6
+
+financing:
+  # Construction loan carry on the house model (added 2026-10-28). Loan = loan_to_cost x (build
+  # cost + soft costs + land). Land in the loan = the parcel's price estimate (price section
+  # below), not its RLV, to avoid a circular calculation. Interest = loan x rate x
+  #   (build_months / 12 x avg_draw_during_build + months_to_sell / 12 x 1.0)
+  # plus loan_closing_pct x loan. For projects, applied per building on its own schedule.
+  loan_to_cost: 0.75             # banks lend 70-80% of build + land (video rule of thumb) (draft)
+  construction_rate_pct: null    # my current construction loan rate (you fill in)
+  loan_closing_pct: null         # loan fees and closing, % of the loan (you fill in)
+  build_months: 6                # Phoenix duplex took 6 months (draft)
+  months_to_sell: 3              # (draft)
+  avg_draw_during_build: 0.5     # average share of the loan drawn while building (draft)
 
 site_work:
   sewer_per_ft: null             # $ per ft of sewer extension; used only where a sewer distance is known (none yet)
@@ -35,7 +71,8 @@ site_work:
 
 subdivision:
   # Finished lot price = this share of the median nearby new-home sale price (sfh comps).
-  lot_to_home_ratio: null        # e.g. 0.25 (you fill in)
+  # (draft; video rule of thumb: land ~20% of the finished home's resale value)
+  lot_to_home_ratio: 0.20
   # Per lot: internal streets, utilities, grading, entitlement. The site work items above (road
   # frontage, stormwater, slope, floodplain, crossing) are added separately; leave them out of this.
   development_cost_per_lot: null
@@ -176,6 +213,7 @@ score:
     utility: ["UTILITY*"]
     church_nonprofit: ["CHURCH"]
     healthcare: ["NURSING HOME", "HOME FOR THE AGED", "*HOSPITAL*", "*ASSISTED LIVING*"]
+    mining: ["MINING"]                       # decided 2026-10-28; on the redevelopment watch list
   # County Master Address Table (parcel_addresses, decided 2026-10-29). Addresses of model ASSET are
   # the county's "unoccupiable" ones (meters, signs, utility, cell towers ...). A parcel whose every
   # address is an ASSET and one of them is a utility use is a utility site: never scored. A utility
@@ -213,8 +251,8 @@ score:
   # Flag existing_commercial_use (still scored) where one of these land uses sits on residential
   # zoning (every parcel with by-right housing yield).
   commercial_land_uses: ["COMMERCIAL*", "INDUSTRIAL*", "OFFICE*", "RETAIL*", "RESTAURANT*", "WAREHOUSE*",
-                         "SERVICE*", "DAY CARE CENTER", "MINING"]
+                         "SERVICE*", "DAY CARE CENTER"]
   # Excluded categories kept on a separate list (parcel_rlv.redevelopment_watch), from land use or
   # address use alike
-  redevelopment_watch: [golf_course, club]
+  redevelopment_watch: [golf_course, club, mining]
   top_n: 20

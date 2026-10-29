@@ -29,7 +29,12 @@ from tests.test_yield import CFG, P, RULES, Y
 
 FEATURES = Path(__file__).parent / "fixtures" / "rlv" / "parcels.csv"
 ECON = copy.deepcopy(R.load_config()[0]) | {
-    "costs": {"build_cost_per_sf": 150, "soft_cost_pct": 10, "target_profit_pct": 15, "demo_cost_per_sf": 10},
+    "costs": {"build_cost_per_sf": {"sfh": 150, "duplex_triplex": 150, "townhome": 150}, "soft_cost_pct": 10,
+              "target_profit_pct": 15, "demo_cost_per_sf": 10},
+    # no selling cost and all cash, so the hand-checked numbers below hold; both are tested on their own
+    "selling": {"selling_cost_pct": 0},
+    "financing": {"loan_to_cost": 0, "construction_rate_pct": None, "loan_closing_pct": None, "build_months": 6,
+                  "months_to_sell": 3, "avg_draw_during_build": 0.5},
     "site_work": {"sewer_per_ft": 100, "road_per_ft": 200, "stormwater_per_unit": 5000, "slope_per_acre": 20000,
                   "floodplain_per_unit": 15000, "creek_crossing": 250000, "road_and_stormwater_on_lot_as_is": False},
     "subdivision": {"lot_to_home_ratio": 0.25, "development_cost_per_lot": 60000},
@@ -86,8 +91,60 @@ def run(pin: str, econ: dict = ECON, comps: dict = COMPS, **override) -> tuple[d
 
 def test_core_costs_must_be_filled():
     assert R.blank_core(ECON) == []
-    assert R.blank_core({"costs": {"build_cost_per_sf": None, "soft_cost_pct": 8, "target_profit_pct": None}}) == [
+    blank = {"sfh": None, "duplex_triplex": None, "townhome": None}
+    assert R.blank_core({"costs": {"build_cost_per_sf": blank, "soft_cost_pct": 8, "target_profit_pct": None}}) == [
         "build_cost_per_sf", "target_profit_pct"]
+    # one product's build cost is enough to run
+    assert R.blank_core({"costs": {"build_cost_per_sf": blank | {"sfh": 200}, "soft_cost_pct": 8,
+                                   "target_profit_pct": 15}}) == []
+
+
+FIN = {"loan_to_cost": 0.75, "construction_rate_pct": 8, "loan_closing_pct": 1, "build_months": 6,
+       "months_to_sell": 3, "avg_draw_during_build": 0.5}
+
+
+def test_selling_and_financing_house_model_02708315():
+    # cur_sfh on 02708315 (see test_rebuild_on_its_lot): revenue 750,000, build 450,000, soft 45,000,
+    # profit 112,500 -> margin 142,500 before selling and financing; price (land) 393,840.
+    econ = copy.deepcopy(ECON) | {"selling": {"selling_cost_pct": 6}, "financing": FIN}
+    _, o = run("02708315", econ)
+    h = o[("cur_sfh", "public")]
+    # selling 6% x 750,000 = 45,000
+    # loan 0.75 x (450,000 + 45,000 + 393,840) = 666,630; interest 666,630 x 8% x (6/12 x 0.5 + 3/12)
+    # = 26,665.20; closing 1% = 6,666.30; financing 33,331.50
+    assert (h["selling_cost"], h["land_in_loan"], h["loan_amount"]) == (
+        pytest.approx(45000), pytest.approx(393840), pytest.approx(666630))
+    assert (h["financing_interest"], h["financing_closing"], h["financing_cost"]) == (
+        pytest.approx(26665.2), pytest.approx(6666.3), pytest.approx(33331.5))
+    assert h["rlv"] == pytest.approx(142500 - 45000 - 33331.5 + 40000 - 19440 - 1036.03, abs=0.01)
+    assert h["blank_inputs"] is None
+    # townhomes (a project): the same formula on the option's totals, land = the whole parcel's price
+    t = o[("townhome", "public")]
+    assert t["loan_amount"] == pytest.approx(0.75 * (t["build_cost"] + t["soft_cost"] + 393840))
+
+
+def test_lot_model_has_no_selling_or_loan_21311502():
+    # subdivisions sell lots to builders: the selling and construction loan settings don't apply
+    econ = copy.deepcopy(ECON) | {"selling": {"selling_cost_pct": 6}, "financing": FIN}
+    _, o = run("21311502", econ)
+    s = o[("sub_standard", "public")]
+    assert (s["selling_cost"], s["financing_cost"], s["loan_amount"]) == (None, None, None)
+    assert s["rlv"] == pytest.approx(1312500 * F_(7) - 420000 - 147.1012 * 200 - 35000 - 23549.34, abs=0.01)
+
+
+def test_blank_selling_financing_and_product_build_cost_02708315():
+    econ = copy.deepcopy(ECON) | {"selling": {"selling_cost_pct": None},
+                                  "financing": FIN | {"construction_rate_pct": None}}
+    econ["costs"]["build_cost_per_sf"]["duplex_triplex"] = None
+    _, o = run("02708315", econ)
+    h = o[("cur_sfh", "public")]
+    # blank selling and loan rate: left out (RLV = upper bound) and named; closing 6,666.30 stays
+    assert (h["selling_cost"], h["financing_interest"], h["financing_cost"]) == (None, None, pytest.approx(6666.3))
+    assert h["blank_inputs"] == "selling_cost_pct, financing.construction_rate_pct"
+    assert h["rlv"] == pytest.approx(142500 - 6666.3 + 40000 - 19440 - 1036.03, abs=0.01)
+    # blank duplex_triplex build cost: plex options get no value at all
+    d = o[("cur_duplex", "public")]
+    assert d["rlv"] is None and d["blank_inputs"] == "build_cost_per_sf.duplex_triplex"
 
 
 def test_discount_factor():

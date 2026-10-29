@@ -1,4 +1,4 @@
-.PHONY: up down test ingest cama addresses ingest-nconemap zoning utilities constraints streets place-types features pieces changes weekly refresh-manual udo zoning-rules yield rlv score digest
+.PHONY: up down test ingest cama addresses ingest-nconemap zoning utilities constraints streets place-types features pieces changes weekly refresh-manual udo zoning-rules yield rlv route score digest
 
 .env:
 	cp .env.example .env
@@ -66,8 +66,10 @@ yield:
 rlv:
 	uv run python -m scoring.rlv
 
-score:
-	@echo "score: not implemented yet" && exit 1
+route:
+	uv run python -m scoring.route
+
+score: route
 
 digest:
 	@echo "digest: not implemented yet" && exit 1

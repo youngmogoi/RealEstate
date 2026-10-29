@@ -42,9 +42,10 @@ STEPS = [
     ("buildable pieces (creek cuts, street access)", "features.pieces"),
     ("parcel yield", "scoring.yield"),
     ("comps, sales ratios, residual land value", "scoring.rlv"),
+    ("deal routing (scores)", "scoring.route"),
     ("changes", "features.changes"),
 ]
-COUNT_TABLES = ["parcels", "parcel_owners", "parcel_sales", "parcel_cama", "comp_sales", "parcel_rlv", "parcel_zoning", "parcel_utilities", "parcel_constraints",
+COUNT_TABLES = ["parcels", "parcel_owners", "parcel_sales", "parcel_cama", "comp_sales", "parcel_rlv", "scores", "parcel_zoning", "parcel_utilities", "parcel_constraints",
                 "streets", "parcel_features", "parcel_pieces", "changes"]
 
 

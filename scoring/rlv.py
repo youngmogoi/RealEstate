@@ -58,7 +58,9 @@ Y = importlib.import_module("scoring.yield")
 ROOT = Path(__file__).resolve().parent.parent
 SQFT_PER_ACRE = 43_560
 FT_PER_MILE = 5_280
-CORE = ["build_cost_per_sf", "soft_cost_pct", "target_profit_pct"]
+CORE = ["build_cost_per_sf", "soft_cost_pct", "target_profit_pct"]   # build cost: at least one product
+# economics costs.build_cost_per_sf key for each comp product
+BUILD_COST_KEY = {"sfh": "sfh", "townhome": "townhome", "plex": "duplex_triplex"}
 SUB_COLS = {"sub_standard": "sub_lots", "sub_conservation": "sub_conservation_lots",
             "sub_compact": "sub_compact_lots", "sub_mixed_income": "sub_mixed_income_lots"}
 SEPTIC_OPTIONS = ["cur_sfh", "split_sfh", "split_sfh_keep_house", "sub_standard"]
@@ -73,7 +75,8 @@ OPTION_COLS = {
     "comp_product": "str", "lot_band": "str", "lot_band_fallback": "bool", "comp_radius_mi": "float",
     "comp_count": "int", "price_per_sf": "float", "comp_median_price": "float", "thin_comps": "bool", "comp_proxy": "bool",
     "home_price": "float", "unit_price": "float", "lot_price": "float", "revenue": "float", "build_cost": "float", "soft_cost": "float",
-    "profit": "float", "development_cost": "float", "absorption_months": "int", "discount_factor": "float",
+    "selling_cost": "float", "land_in_loan": "float", "loan_amount": "float", "financing_interest": "float",
+    "financing_closing": "float", "financing_cost": "float", "profit": "float", "development_cost": "float", "absorption_months": "int", "discount_factor": "float",
     "discount_cost": "float", "adu_premium": "float", "retained_value": "float",
     "existing_heated_sf": "float", "demolition_cost": "float",
     "sewer_ft": "float", "sewer_cost": "float", "road_ft": "float", "road_cost": "float",
@@ -110,7 +113,41 @@ def load_config() -> tuple[dict, dict]:
 
 def blank_core(econ: dict) -> list[str]:
     """Core cost settings still blank; RLV can't be computed until they are filled in."""
-    return [k for k in CORE if econ["costs"].get(k) is None]
+    c = econ["costs"]
+    filled = lambda k: (any(v is not None for v in (c.get(k) or {}).values()) if k == "build_cost_per_sf"
+                        else c.get(k) is not None)
+    return [k for k in CORE if not filled(k)]
+
+
+def financing(build: float, soft: float, land: float | None, fin: dict, blanks: list[str]) -> dict:
+    """Construction loan carry, house model (economics `financing`): loan = loan_to_cost x (build +
+    soft + land), land = the parcel's price estimate; interest = loan x rate x (build_months / 12 x
+    avg_draw_during_build + months_to_sell / 12); closing = loan x loan_closing_pct. A blank input
+    leaves its part out (flagged); financing_cost = the parts known, None if neither is."""
+    out = {"land_in_loan": land, "loan_amount": None, "financing_interest": None, "financing_closing": None,
+           "financing_cost": None}
+    ltc = fin.get("loan_to_cost")
+    if ltc == 0:
+        return out | {"loan_amount": 0.0, "financing_interest": 0.0, "financing_closing": 0.0, "financing_cost": 0.0}
+    missing = [k for k in ("loan_to_cost",) if fin.get(k) is None] + ([] if land is not None else ["land price"])
+    if missing:
+        blanks.extend(f"financing.{k}" for k in missing)
+        return out
+    loan = ltc * (build + soft + land)
+    out["loan_amount"] = loan
+    timing = ("build_months", "avg_draw_during_build", "months_to_sell", "construction_rate_pct")
+    if gap := [k for k in timing if fin.get(k) is None]:
+        blanks.extend(f"financing.{k}" for k in gap)
+    else:
+        out["financing_interest"] = loan * fin["construction_rate_pct"] / 100 * (
+            fin["build_months"] / 12 * fin["avg_draw_during_build"] + fin["months_to_sell"] / 12)
+    if fin.get("loan_closing_pct") is None:
+        blanks.append("financing.loan_closing_pct")
+    else:
+        out["financing_closing"] = loan * fin["loan_closing_pct"] / 100
+    parts = [v for v in (out["financing_interest"], out["financing_closing"]) if v is not None]
+    out["financing_cost"] = sum(parts) if parts else None
+    return out
 
 
 def window_start(as_of: date, months: int) -> date:
@@ -608,6 +645,7 @@ def comp_basis(o: dict, comps: dict, econ: dict) -> dict:
 def value_option(o: dict, p: dict, comps: dict, econ: dict, basis: str, sewer: str) -> dict:
     """One option's RLV with every input (a parcel_rlv_options row)."""
     costs, sw, hs, proj = econ["costs"], econ["site_work"], econ["house_size"], econ["project"]
+    fin = econ.get("financing") or {}
     blanks, notes = [], list(o["notes"])
 
     def item(name: str, qty: float, rate: float | None) -> float | None:
@@ -674,16 +712,24 @@ def value_option(o: dict, p: dict, comps: dict, econ: dict, basis: str, sewer: s
         revenue = units * lot_price
         unit_price, house_fp = home, None
         dev = item("development_cost_per_lot", units, econ["subdivision"].get("development_cost_per_lot"))
-        margin = revenue
+        margin = revenue       # lots sold to builders: no selling cost or construction loan here
         row |= {"lot_price": lot_price, "development_cost": dev}
     else:
+        key = BUILD_COST_KEY[o["product"]]
+        rate = (costs["build_cost_per_sf"] or {}).get(key)
+        if rate is None:
+            blanks.append(f"build_cost_per_sf.{key}")
+            return no_value(f"no build cost for {key}")
         revenue = buildings * home
-        build = buildings * costs["build_cost_per_sf"] * size
+        build = buildings * rate * size
         soft = build * costs["soft_cost_pct"] / 100
         profit = revenue * costs["target_profit_pct"] / 100
+        pct = (econ.get("selling") or {}).get("selling_cost_pct")
+        selling = item("selling_cost_pct", revenue, None if pct is None else pct / 100)
+        fin_row = financing(build, soft, p.get("_price"), fin, blanks)
         unit_price, house_fp, dev = home / upb, size / stories, 0.0
-        margin = revenue - build - soft - profit
-        row |= {"build_cost": build, "soft_cost": soft, "profit": profit}
+        margin = revenue - build - soft - profit - (selling or 0) - (fin_row["financing_cost"] or 0)
+        row |= {"build_cost": build, "soft_cost": soft, "profit": profit, "selling_cost": selling} | fin_row
 
     months, factor = None, 1.0
     if o["project"]:
@@ -807,7 +853,15 @@ def score_parcel(p: dict, comps: dict, rules: dict, econ: dict, scoring_cfg: dic
     basis = sewer_basis(p)
     land_class = "vacant" if p.get("vacant") else "improved"
     ratio, group, n = pick_ratio(ratios, p.get("municipality"), land_class)
-    p = p | {"_ratio": ratio}
+    assessed = p.get("total_value")
+    price = assessed * ratio if assessed is not None and ratio is not None else None
+    price_basis, per_acre, land_group, land_n = "assessed_x_ratio", None, None, None
+    if p.get("puv_enrolled") and land is not None:
+        acres = (p.get("area_sf") or 0) / SQFT_PER_ACRE
+        per_acre, land_group, land_n = pick_land_price(land, p.get("municipality"), acres, econ["land_price"]["acre_bands"])
+        price = per_acre * acres if per_acre is not None else None
+        price_basis = "vacant_land_per_acre"
+    p = p | {"_ratio": ratio, "_price": price}
     public = [value_option(o, p, comps, econ, basis, "public") for o in yield_options(p, rules, scoring_cfg)]
     septic = [value_option(o, p, comps, econ, basis, "septic")
               for o in septic_options(p, rules, scoring_cfg, econ["sewer"]["septic_min_lot_sf"])] \
@@ -817,14 +871,6 @@ def score_parcel(p: dict, comps: dict, rules: dict, econ: dict, scoring_cfg: dic
     if_sewer = best(public, "by_right") if basis == "none_outside" else None
     rez, crossed = best(public, "rezoning"), best(public, "if_crossed")
 
-    assessed = p.get("total_value")
-    price = assessed * ratio if assessed is not None and ratio is not None else None
-    price_basis, per_acre, land_group, land_n = "assessed_x_ratio", None, None, None
-    if p.get("puv_enrolled") and land is not None:
-        acres = (p.get("area_sf") or 0) / SQFT_PER_ACRE
-        per_acre, land_group, land_n = pick_land_price(land, p.get("municipality"), acres, econ["land_price"]["acre_bands"])
-        price = per_acre * acres if per_acre is not None else None
-        price_basis = "vacant_land_per_acre"
     category, reason = exclusion(p, econ["score"])
     commercial = any(fnmatch.fnmatchcase((p.get("land_use") or "").upper(), pat)
                      for pat in econ["score"]["commercial_land_uses"])
@@ -961,6 +1007,7 @@ FLAG_COLS = ["verify_sewer", "sewer_low_confidence", "sewer_assumed_new_units", 
 def explain(p: pd.Series, o: pd.Series | None, econ: dict) -> list[str]:
     """Every input behind a parcel's score, as printable lines."""
     costs, sw, sub, proj = econ["costs"], econ["site_work"], econ["subdivision"], econ["project"]
+    fin = econ.get("financing") or {}
     lines = [f"{p['pin']}  {p['site_address'] or '(no address)'}  {p['jurisdiction']} {p['zone_code']}  "
              f"{p['area_sf'] / SQFT_PER_ACRE:,.2f} ac  {p['land_use']}  [parcel_rlv, parcel_yield, parcel_features]",
              f"  sewer: {p['sewer_basis']} (status {p['sewer_status']}, confidence {p['sewer_confidence']}, "
@@ -999,8 +1046,17 @@ def explain(p: pd.Series, o: pd.Series | None, econ: dict) -> list[str]:
         b = o["buildings"]
         lines += [house, comp, size + f", unit {_money(o['unit_price'])}",
                   f"    revenue    {b:g} x {_n(o['size_sf'])} sf x ${_n(o['price_per_sf'])} = {_money(o['revenue'])}",
-                  f"    build cost {b:g} x {_n(o['size_sf'])} sf x ${costs['build_cost_per_sf']:,} = -{_money(o['build_cost'])}",
+                  f"    build cost {b:g} x {_n(o['size_sf'])} sf x "
+                  f"{_money(costs['build_cost_per_sf'].get(BUILD_COST_KEY[o['product']]))} "
+                  f"({BUILD_COST_KEY[o['product']]}) = -{_money(o['build_cost'])}",
                   f"    soft cost  {costs['soft_cost_pct']}% of build = -{_money(o['soft_cost'])}",
+                  f"    selling    {(econ.get('selling') or {}).get('selling_cost_pct')}% of revenue = "
+                  f"-{_money(o['selling_cost'])}",
+                  f"    financing  loan {fin.get('loan_to_cost')} x (build + soft + land {_money(o['land_in_loan'])}) = "
+                  f"{_money(o['loan_amount'])}; interest at {fin.get('construction_rate_pct')}% x "
+                  f"({fin.get('build_months')} mo / 12 x {fin.get('avg_draw_during_build')} + "
+                  f"{fin.get('months_to_sell')} mo / 12) = {_money(o['financing_interest'])}; closing "
+                  f"{fin.get('loan_closing_pct')}% = {_money(o['financing_closing'])} -> -{_money(o['financing_cost'])}",
                   f"    profit     {costs['target_profit_pct']}% of revenue = -{_money(o['profit'])}"]
     if pd.notna(o["absorption_months"]):
         lines.append(f"    absorption {o['units']} / {proj['absorption_homes_per_month']} a month = "

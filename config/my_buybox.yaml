@@ -1,0 +1,13 @@
+# My own spec-home buy box (Phase 2.4, scoring/route.py). Drafts from 2026-10-28; edit freely.
+# A parcel is "Build" when its best by-right use is one of these products and every limit fits.
+# Blank (null) = no limit.
+
+products: [sfh, duplex, triplex]   # the lot as is or a split, built as these
+max_units_per_parcel: 4            # units of the best option
+acres_min: 0.1                     # parcel gross acres
+acres_max: 3
+max_price: 400000                  # parcel price (assessed x sales ratio until listings exist)
+min_score: 50000                   # best RLV - price
+counties: [Mecklenburg]
+areas: [Charlotte]                 # county tax municipality, or [all]
+sewer_required: true               # parcels scored without public sewer don't fit

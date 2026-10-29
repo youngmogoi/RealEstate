@@ -1,0 +1,38 @@
+# Partner buy boxes and routing thresholds (Phase 2.4, scoring/route.py, `make route`).
+# Created 2026-10-28. Replace the test partner with real ones; one entry per partner.
+#
+# Fields (every partner):
+#   name                     shown on the routing list
+#   products                 any of: sfh, duplex, triplex, quadraplex, townhome, subdivision
+#                            (subdivision = the sub_* options; sfh/duplex/... = the lot as is or splits)
+#   counties                 county names, or [all]
+#   areas                    municipalities (county tax municipality, e.g. Charlotte), or [all]
+#   acres_min, acres_max     parcel gross acres (blank = no limit)
+#   density_min, density_max units per gross acre of the option (blank = no limit)
+#   sewer_required           true: parcels scored without public sewer (outside a town, unknown) don't match
+#   max_land_price_per_unit  parcel price / the option's units (blank = no limit)
+#   townhome_unit_width_ft   townhome partners: townhome yield and RLV are recomputed at this width
+#   payment_structure        free text (e.g. assignment fee, takedown schedule), shown with the match
+
+partners:
+  - name: "TEST PARTNER - not real"
+    products: [townhome]
+    counties: [Mecklenburg]
+    areas: [all]
+    acres_min: 3
+    acres_max: 15
+    density_min: 6
+    density_max: 12
+    sewer_required: true
+    max_land_price_per_unit: 40000
+    townhome_unit_width_ft: 22
+    payment_structure: assignment fee
+
+routing:
+  # Every parcel here is in Mecklenburg (the only county loaded).
+  parcel_county: Mecklenburg
+  # Entitle candidate (rezoning) and crossing candidate (if the creek is crossed): the value must
+  # beat the best by-right value by BOTH of these, and its score (value - price) must be > 0.
+  # When the by-right value is 0 or negative, the % test passes. (defaults, decided 2026-10-28)
+  entitle_min_uplift_pct: 25
+  entitle_min_uplift_usd: 250000

@@ -48,6 +48,20 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
 - Phase 2.4 deal routing (decided 2026-10-28): exclude government, utility, church/nonprofit,
   HOA and common-area parcels from routing. Keep them in the data with their flags
   (owner_type, land use, access_via_common_area), but never score them as opportunities.
+  Built 2026-10-28 (`make route`, scoring/route.py -> scores, scores_partner_options): partners in
+  config/partners.yaml (TEST PARTNER is fake; routing thresholds there too), my buy box in
+  config/my_buybox.yaml; exclusions stay in economics.yaml `score` (mining added, on redevelopment
+  watch). Order: excluded -> build -> route -> build_fallback -> entitle -> crossing_candidate -> skip.
+  Entitle/crossing need +entitle_min_uplift_pct AND +entitle_min_uplift_usd over the best by-right
+  value and score > 0. Townhome partners: yield and RLV recomputed at their unit width; a partner
+  version counts only where its density and land $/unit fit. apartments_possible = parcel_yield
+  (types.multifamily_stacked, UDO Table 15-1).
+- Costs (decided 2026-10-28, economics.yaml; draft values from a Phoenix duplex breakdown):
+  build_cost_per_sf per product (sfh, duplex_triplex = every plex, townhome; a blank product gets no
+  house-model RLV); selling.selling_cost_pct on every unit sold; financing (house model only):
+  loan = loan_to_cost x (build + soft + land at the parcel's PRICE estimate, not its RLV), interest =
+  loan x rate x (build_months/12 x avg_draw_during_build + months_to_sell/12), plus loan_closing_pct.
+  The lot model (subdivisions) has neither. Soft cost excludes financing; profit is on the sale price.
 - Zoning rules (Phase 2.1, decided 2026-10-28; config/zoning_rules.yaml, check with
   `make zoning-rules`, ordinances via `make udo` into data/raw/udo/ with manifest.csv):
   townhome = UDO "Multi-Family Attached Unit". Yield is stored per housing type (sfh, duplex,
