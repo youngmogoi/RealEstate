@@ -152,3 +152,27 @@ def test_rerun_stores_no_changes(result):
     engine, slope, dates, changes, _ = result
     assert changes["added"] == 6
     assert assign_parcels(engine, AS_OF, CFG, slope, dates, S) == {"added": 0, "changed": 0, "removed": 0, "current": 6}
+
+
+def _rail_file(path: Path) -> None:
+    # the CSX main line where it crosses 12705514 (Pecan Av), from NTAD (FRAARCID 488953), cut short
+    line = shapely.LineString([(-80.8152, 35.2140), (-80.8146, 35.2148)])
+    gpd.GeoDataFrame({"NET": ["M", "A"], "RROWNER1": ["CSXT", None]}, geometry=[line, line], crs=4326) \
+        .to_file(path, driver="GeoJSON")
+
+
+def test_rail_lines_become_unbuildable_corridors(tmp_path, monkeypatch):
+    import ingest.constraints as C
+    monkeypatch.setattr(C, "ROOT", tmp_path)
+    (tmp_path / "Rail").mkdir()
+    _rail_file(tmp_path / "Rail" / "rail_lines_2026-11-02.geojson")
+    _rail_file(tmp_path / "Rail" / "rail_lines_2026-11-09.geojson")
+    spec = CFG["layers"]["rail"] | {"file": "Rail/rail_lines_*.geojson"}
+    assert C.layer_file(spec).name == "rail_lines_2026-11-09.geojson"       # the newest download
+    g = C.read_layer("rail", spec)
+    assert len(g) == 1                                                       # the abandoned copy is dropped
+    assert (g.iloc[0]["layer"], g.iloc[0]["class"]) == ("rail", "unbuildable")
+    length = gpd.GeoSeries([shapely.LineString([(-80.8152, 35.2140), (-80.8146, 35.2148)])], crs=4326) \
+        .to_crs(2264).length.iloc[0]
+    # 25 ft each side plus round ends: length x 50 + pi x 25^2
+    assert g.geometry.area.iloc[0] == pytest.approx(length * 50 + np.pi * 625, rel=0.01)

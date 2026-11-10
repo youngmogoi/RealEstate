@@ -1,0 +1,32 @@
+# Backtest of the residual land value model (scoring/backtest.py, `make backtest`). Created
+# 2026-10-28. Compares the model's RLV at the time of a land sale with the price actually paid.
+# Changing these changes only which sales are tested, never the economics.
+
+# Land sales in the last window_months of the sales file (its latest sale date).
+window_months: 24
+# "Later got a building permit" (decided 2026-10-28, proxy until a permit ingest exists): sold as
+# vacant, and CAMA now shows one building on the account built in or after the sale year.
+# Sales kept: arm's-length (blank validity code) plus these codes (land-only prices), on deeds that
+# convey one parcel only.
+validity_codes_kept: ["DEMO SALE", "IMPROVEMENTS NOT INCLUDED IN SALE"]
+single_parcel_deeds_only: true
+# CAMA building type of what was built -> product, and the yield option it is compared with (the lot
+# as it is: the matching option with the highest RLV).
+built_products:
+  sfh:
+    bldg_types: ["SINGLE FAMILY RESIDENTIAL"]
+    options: [cur_sfh]
+  plex:
+    bldg_types: ["DUPLEX-TRIPLEX-QUADRAPLEX"]
+    options: [cur_duplex, cur_triplex, cur_quadraplex]
+# Townhome lots: a separate, rough per-lot report (decided 2026-10-28). Price per lot = deed price /
+# parcels on the deed (most townhome lots sell in multi-lot takedowns), compared with one townhome
+# unit's residual before site work (nearby townhome comps at the time, house-model costs).
+townhome:
+  bldg_types: ["TOWNHOUSE"]
+  # one row per deed; arm's-length plus land-only and multi-lot takedown codes
+  validity_codes_kept: ["DEMO SALE", "IMPROVEMENTS NOT INCLUDED IN SALE", "CONVEYANCE OF 2 OR MORE PARCELS",
+                        "FAIR MARKET CONVEYANCE OF 2 OR MORE PARCELS", "BUILDER SALE OR OTHER MISC",
+                        "SALE INCLUDED PARCELS TO BE ASSEMBLED FOR DEVEL.", "ACREAGE SPLIT INTO LOTS"]
+worst_n: 10
+report_dir: reports

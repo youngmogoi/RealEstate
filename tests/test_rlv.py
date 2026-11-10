@@ -45,7 +45,12 @@ ECON = copy.deepcopy(R.load_config()[0]) | {
 }
 ECON["house_size"] = {"story_height_ft": 12, "max_stories": 3}
 ECON["sewer"] = {"septic_min_lot_sf": 43560}
-ECON["rollback_tax"] = ECON["rollback_tax"] | {"tax_rate_per_100": {"CHARLOTTE": 1.0}}
+# The detailed model (tested here by hand): every switch on, the loan model, absorption and the
+# rollback with interest. The simple model of economics.yaml (2026-11-09) is tested on SIMPLE below.
+ECON.pop("carry_cost_pct", None)
+ECON["options"] = {k: True for k in ECON.get("options", {})}
+ECON["rollback_tax"] = {"years": 4, "interest_first_month_pct": 2, "interest_monthly_pct": 0.75,
+                        "tax_rate_per_100": {"CHARLOTTE": 1.0}}
 EDGES = ECON["comps"]["lot_bands_sf"]                 # 0, 5000, 8000, 12000, 20000, 43560
 SFH = {"radius_mi": 1, "comp_count": 12, "median_price_per_sf": 250.0, "median_sale_price": 750000.0,
        "median_heated_sf": 3000.0, "thin_comps": False}
@@ -272,6 +277,10 @@ def test_blank_costs_are_left_out_and_flagged():
     m = o[("sub_mixed_income", "public")]
     assert m["obligation_cost"] is None and m["blank_inputs"] == "road_per_ft, affordable_max_price"
     assert o[("cur_sfh", "public")]["blank_inputs"] is None    # vacant, no road: nothing missing
+    # incomplete options never compete (decided 2026-10-28): the best use is the complete cur_sfh;
+    # conservation (road blank) is reported beside it as the upper bound
+    assert (row["best_option"], row["upper_bound_option"]) == ("cur_sfh", "sub_conservation")
+    assert row["upper_bound_rlv"] == pytest.approx(c["rlv"])
     assert row["rlv_incomplete"] and row["blank_inputs"] == "road_per_ft"
     _, o = run("02708315", econ)
     assert o[("cur_sfh", "public")]["demolition_cost"] is None and o[("cur_sfh", "public")]["blank_inputs"] == "demo_cost_per_sf"
@@ -279,7 +288,7 @@ def test_blank_costs_are_left_out_and_flagged():
     econ["subdivision"]["lot_to_home_ratio"] = None
     row, o = run("21311502", econ)
     assert o[("sub_standard", "public")]["rlv"] is None and "lot_to_home_ratio" in o[("sub_standard", "public")]["blank_inputs"]
-    assert row["best_option"] == "split_sfh"
+    assert (row["best_option"], row["upper_bound_option"]) == ("cur_sfh", "split_sfh")   # road still blank
 
 
 def test_unknown_sewer_outside_town_scores_on_septic_21311502():
@@ -438,3 +447,175 @@ def test_store_and_rerun_without_changes():
     finally:
         with engine.begin() as conn:
             conn.execute(text(f"DROP SCHEMA {s} CASCADE"))
+
+
+def test_no_tax_record_shape_is_excluded():
+    # e.g. 19937W01 (302 ac of lake, no owner account, no land use): never scored
+    row, _ = run("21311502", owner_name=None, land_use=None)
+    assert (row["exclusion_category"], row["score"]) == ("no_tax_record", None)
+    row, _ = run("21311502", owner_name="OWNER", land_use=None)        # an owner: still scored
+    assert row["exclusion_category"] is None
+
+
+def test_price_tiers():
+    edges = [0, 250, 350, 500, 750]
+    assert [R.price_tier(x, edges) for x in (100, 250, 349.9, 350, 600, 750, 1200, None)] == [
+        "<250", "250-350", "250-350", "350-500", "500-750", "750+", "750+", None]
+
+
+def test_build_cost_by_comp_tier_02708315():
+    # comps at $250/sf -> tier 250-350. Blank tier: the product value (150); filled: 200 instead.
+    _, o = run("02708315")
+    assert (o[("cur_sfh", "public")]["price_tier"], o[("cur_sfh", "public")]["build_cost"]) == ("250-350", 450000)
+    econ = copy.deepcopy(ECON)
+    econ["costs"]["build_cost_per_sf_by_tier"] = {"sfh": {"250-350": 200}}
+    _, o = run("02708315", econ)
+    h = o[("cur_sfh", "public")]
+    # 3,000 sf x 200 = 600,000; soft 60,000; margin 750,000 - 600,000 - 60,000 - 112,500 = -22,500
+    assert h["build_cost"] == 600000 and "build cost for the 250-350 $/sf tier" in h["notes"]
+    assert h["rlv"] == pytest.approx(-22500 + 40000 - 19440 - 1036.03, abs=0.01)
+
+
+def test_asking_price_is_the_price_02708315():
+    row, _ = run("02708315", asking_price=300000)
+    assert (row["price"], row["price_basis"], row["asking_price"]) == (300000, "asking_price", 300000)
+    assert row["score"] == pytest.approx(162023.97 - 300000, abs=0.01)
+
+
+# The simple model (economics.yaml 2026-11-09), with its draft values pinned here: build floor 40% of
+# the sale price, carry 3.5% of it, a 15% project discount, the rollback estimate, and conservation,
+# compact, mixed income, obligations, if-crossed, ADU, slope, floodplain and sewer extension off.
+SIMPLE = copy.deepcopy(R.load_config()[0]) | {
+    "costs": {"build_cost_per_sf": {"sfh": 140, "duplex_triplex": 130, "townhome": 130},
+              "build_cost_min_pct_of_sale": 40, "soft_cost_pct": 13, "target_profit_pct": 15, "demo_cost_per_sf": 8},
+    "selling": {"selling_cost_pct": 6}, "carry_cost_pct": 3.5,
+    "site_work": {"road_per_ft": 200, "stormwater_per_unit": 5000, "creek_crossing": None,
+                  "road_and_stormwater_on_lot_as_is": False},
+    "subdivision": {"lot_to_home_ratio": 0.2, "development_cost_per_lot": 60000},
+    "project": {"project_discount_pct": 15, "max_lots_per_project": None},
+    "plex": {"duplex_discount": 0.9, "min_real_sales": 20},
+    "rollback_tax": {"rollback_rate_pct": 1.2, "years": 4},
+    "options": {k: False for k in ("sub_conservation", "sub_compact", "sub_mixed_income", "obligations",
+                                   "if_crossed_valuation", "adu_premium", "slope_cost", "floodplain_cost",
+                                   "sewer_extension_cost")},
+}
+SIMPLE["house_size"] = ECON["house_size"]
+SIMPLE["sewer"] = ECON["sewer"]
+SIMPLE.pop("financing", None)
+
+
+def test_simple_house_model_02708315():
+    # comps $250/sf x 3,000 sf = 750,000. Build = max(140 x 3,000 = 420,000, 40% x 750,000 = 300,000)
+    # = 420,000; soft 13% 54,600; profit 15% 112,500; selling 6% 45,000; carry 3.5% 26,250 -> margin
+    # 91,650. No ADU or slope cost (switched off); demolition 1,944 sf x 8 = 15,552 -> 76,098.
+    row, o = run("02708315", SIMPLE)
+    h = o[("cur_sfh", "public")]
+    assert (h["build_cost"], h["soft_cost"], h["selling_cost"], h["financing_cost"]) == (
+        420000, pytest.approx(54600), pytest.approx(45000), pytest.approx(26250))
+    assert (h["adu_premium"], h["slope_cost"], h["slope_acres"], h["demolition_cost"]) == (0, 0, 0, 15552)
+    assert h["rlv"] == pytest.approx(76098) and h["blank_inputs"] is None
+    assert row["best_option"] == "cur_sfh" and not row["rlv_incomplete"]
+
+
+def test_simple_build_cost_floor_02708315():
+    # comps at $600/sf: home 1,800,000; 40% = 720,000 > 140 x 3,000 = 420,000, so the floor binds.
+    # soft 93,600; profit 270,000; selling 108,000; carry 63,000 -> 545,400 - demolition 15,552
+    sfh = SFH | {"median_price_per_sf": 600.0}
+    comps = COMPS | {"sfh": sfh, "lot": {b: sfh for b in R.band_labels(EDGES)}}
+    _, o = run("02708315", SIMPLE, comps)
+    h = o[("cur_sfh", "public")]
+    assert h["build_cost"] == pytest.approx(720000) and "build cost at the floor: 40% of the sale price" in h["notes"]
+    assert h["rlv"] == pytest.approx(529848)
+
+
+def test_simple_project_discount_02708315():
+    # rezoning townhome, 4 units: 230 x 2,200 = 506,000 each; build max(130 x 2,200 = 286,000,
+    # 202,400) = 286,000; soft 37,180; profit 75,900; selling 30,360; carry 17,710 -> 58,850 a unit,
+    # 235,400. Less demolition 15,552, road 80.4828 ft x 200 = 16,096.56, stormwater 4 x 5,000
+    # = 183,751.44; project discount 15% = 27,562.72 -> 156,188.72
+    _, o = run("02708315", SIMPLE)
+    t = o[("townhome", "public")]
+    assert (t["absorption_months"], t["discount_factor"]) == (None, pytest.approx(0.85))
+    assert t["discount_cost"] == pytest.approx(27562.72, abs=0.01)
+    assert t["rlv"] == pytest.approx(156188.72, abs=0.01)
+
+
+def test_simple_switches_21311502():
+    row, o = run("21311502", SIMPLE)
+    names = {k[0] for k in o}
+    # conservation, compact, mixed income and every if-crossed option are not valued at all
+    assert not names & {"sub_conservation", "sub_compact", "sub_mixed_income"}
+    assert not any(n.startswith("if_crossed_") for n in names) and row["if_crossed_option"] is None
+    assert "sub_standard" in names and row["best_option"] is not None
+    # obligations off: the quadraplex's affordable unit is valued at market, with a note
+    q = o[("cur_quadraplex", "public")]
+    assert (q["affordable_units"], q["obligation_cost"]) == (0, 0) and "obligations switched off" in q["notes"]
+    # no floodplain cost although 11% of the net land is flagged
+    assert all(x["floodplain_cost"] in (0, None) and x["floodplain_units"] in (0, None) for x in o.values())
+
+
+def test_simple_rollback_estimate():
+    # deferred value 100,000 x 1.2% x 4 years = 4,800
+    assert R.rollback_tax({"deferred_value": 100000}, SIMPLE["rollback_tax"]) == pytest.approx(4800)
+    assert R.rollback_tax({"deferred_value": 100000}, {"rollback_rate_pct": None, "years": 4}) is None
+
+
+# ---------------------------------------------------------------- buildability (decided 2026-11-09)
+# 02708315: 80 ft of frontage, 12,141 sf all buildable; its cur_sfh house is 3,000 sf on 3 floors
+# (40 ft / 12 ft), so a 1,000 sf footprint. economics `buildability`: min_frontage_ft 20.
+
+def test_landlocked_lot_gets_no_house():
+    # The rear lots you found landlocked in the 2026-11-09 top 10 (e.g. 12524379 behind 912 Henley Pl)
+    # had 0 ft of frontage but were valued as a house on the lot as it is.
+    row, o = run("02708315", frontage_ft=0)
+    assert o[("cur_sfh", "public")]["rlv"] is None
+    assert o[("cur_sfh", "public")]["notes"] == "no street frontage (landlocked)"
+    assert (row["best_option"], row["no_value_reason"]) == (None, "no street frontage (landlocked)")
+
+
+def test_frontage_below_minimum_gets_no_house():
+    # a 4 ft frontage (16310118 Shady Bluff Dr) is a corner touching the street, not a driveway
+    _, o = run("02708315", frontage_ft=12)
+    assert o[("cur_sfh", "public")]["notes"] == "frontage 12 ft < 20 ft: no street access for a house"
+    _, o = run("02708315", frontage_ft=20)
+    assert o[("cur_sfh", "public")]["rlv"] == pytest.approx(162023.97, abs=0.01)
+
+
+def test_access_through_common_area_counts():
+    _, o = run("02708315", frontage_ft=0, access_via_common_area=True)
+    assert o[("cur_sfh", "public")]["rlv"] == pytest.approx(162023.97, abs=0.01)
+
+
+def test_house_footprint_must_fit_buildable_land():
+    _, o = run("02708315", net_sf=999)
+    assert o[("cur_sfh", "public")]["notes"] == "buildable land 999 sf < the house's footprint 1,000 sf"
+    _, o = run("02708315", net_sf=1000)
+    assert o[("cur_sfh", "public")]["rlv"] == pytest.approx(162023.97, abs=0.01)
+    econ = copy.deepcopy(ECON)
+    econ["buildability"]["house_must_fit_buildable"] = False
+    _, o = run("02708315", econ, net_sf=999)
+    assert o[("cur_sfh", "public")]["rlv"] == pytest.approx(162023.97, abs=0.01)
+
+
+@pytest.mark.parametrize("land_use, category", [
+    ("COS NO AV10", "hoa_common_area"),                       # common open space, no active tax (you)
+    ("REC AREA", "hoa_common_area"),
+    ("FLUM/SWIM FLOODWAY (NO BUILD ZONE)", "unbuildable"),    # 5 of the first top 10 (Cloister Dr, Old Bell Rd)
+    ("WASTELAND, SLIVERS, GULLIES, ROCK OUTCROP", "unbuildable"),   # 3019 Shaker Dr
+    ("PVT Owned RR with Rail ROW", "unbuildable"),            # 701 Pecan Av
+    ("100 YEAR FLOOD PLAIN - AC", "unbuildable"),
+    ("STATE PROP", "government"),
+    ("AIRPORT", "government"),
+    ("SINGLE FAMILY RESIDENTIAL", None),
+])
+def test_unbuildable_and_public_land_uses_are_excluded(land_use, category):
+    row, _ = run("02708315", land_use=land_use)
+    assert row["exclusion_category"] == category
+    assert (row["score"] is None) == (category is not None)
+
+
+def test_rear_lot_and_rail_flags_are_kept():
+    # 12524379 (Henley Pl) is landlocked behind 912 Henley Pl (12524309), same owner, with a house
+    row, _ = run("02708315", frontage_ft=0, rear_lot_front_pin="12524309", rear_lot_with_house=True,
+                 rail_on_parcel=True)
+    assert (row["rear_lot_front_pin"], row["rear_lot_with_house"], row["rail_on_parcel"]) == ("12524309", True, True)

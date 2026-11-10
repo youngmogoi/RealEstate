@@ -18,6 +18,10 @@ Actions, first that applies (decided 2026-10-28):
   crossing_candidate  the same test for the "if the creek is crossed" value.
   skip                everything else; the reason says why.
 
+Only complete options (no blank inputs) are ranked and routed (decided 2026-10-28); a higher
+option with blank inputs is shown beside the action as the upper bound (parcel_rlv upper_bound_*).
+Entitle needs a place type in routing.entitle_place_types (Neighborhood 2 or higher intensity).
+
 Townhome partners: for a parcel inside a townhome partner's area, acreage and sewer limits, the
 townhome yield and its RLV are recomputed at that partner's unit width (same land, same rule as
 parcel_yield) and stored with every input in scores_partner_options. The best by-right use (and
@@ -27,7 +31,8 @@ scoring.yaml width) and the partner versions that fit their partner's density an
 Product of an option: sub_* = subdivision, townhome = townhome, cur_/split_<type> = <type> (sfh,
 duplex, triplex, quadraplex); if_crossed_ options as the option they cross to.
 
-Flags stored per parcel: verify_sewer (parcel_rlv), no_frontage, creek_divides, apartments_possible
+Flags stored per parcel: verify_sewer, rail_on_parcel, rear_lot_with_house + rear_lot_front_pin (parcel_rlv),
+no_frontage, creek_divides, apartments_possible
 (parcel_yield: Multi-Family Stacked allowed by right).
 """
 
@@ -54,12 +59,16 @@ SCORES_COLS = {
     "option": "str", "option_kind": "str", "product": "str", "units": "int", "rlv": "float", "price": "float",
     "score": "float", "partner": "str", "partner_payment": "str", "unit_width_ft": "float",
     "matched_partners": "str", "best_option": "str", "best_rlv": "float", "best_partner": "str",
+    "upper_bound_option": "str", "upper_bound_rlv": "float", "blank_inputs": "str", "place_type": "str",
+    "price_per_sf": "float", "best_price_per_sf": "float", "arv": "float", "land_pct_of_arv": "float",
+    "build_cost": "float", "cash_needed": "float",
     "exclusion_category": "str", "redevelopment_watch": "bool",
     "verify_sewer": "bool", "no_frontage": "bool", "creek_divides": "bool", "apartments_possible": "bool",
+    "rail_on_parcel": "bool", "rear_lot_with_house": "bool", "rear_lot_front_pin": "str",
     "reason": "str",
 }
 PARTNER_COLS = {"partner": "str", "unit_width_ft": "float"} | R.OPTION_COLS
-FLAGS = ["verify_sewer", "no_frontage", "creek_divides", "apartments_possible"]
+FLAGS = ["verify_sewer", "no_frontage", "creek_divides", "apartments_possible", "rail_on_parcel", "rear_lot_with_house"]
 
 
 def load_config() -> tuple[dict, dict]:
@@ -130,6 +139,16 @@ def my_misses(box: dict, p: dict, o: dict, county: str) -> list[str]:
         out.insert(0, f"{product(o['option'])} not in my products")
     if box.get("max_units_per_parcel") is not None and o["units"] > box["max_units_per_parcel"]:
         out.append(f"{o['units']} units > {box['max_units_per_parcel']}")
+    floor = box.get("min_resale_per_sf")
+    if floor is not None and (o.get("price_per_sf") is None or o["price_per_sf"] < floor):
+        out.append(f"comps {_money(o.get('price_per_sf'))}/sf < {_money(floor)}/sf")
+    land_cap = box.get("max_land_pct_of_arv")
+    if land_cap is not None and p.get("price") is not None and o.get("revenue"):
+        if p["price"] / o["revenue"] * 100 > land_cap:
+            out.append(f"land {p['price'] / o['revenue'] * 100:.1f}% of ARV > {land_cap}%")
+    cap = box.get("max_sale_price_per_home")
+    if cap is not None and o.get("unit_price") is not None and o["unit_price"] > cap:
+        out.append(f"home {_money(o['unit_price'])} > {_money(cap)}")
     if p.get("price") is None:
         out.append("no price")
     else:
@@ -180,30 +199,44 @@ def route_parcel(p: dict, options: list[dict], partner_rows: dict[str, list[dict
     row = dict.fromkeys(SCORES_COLS) | {
         "pin": p["pin"], "site_address": p.get("site_address"), "municipality": p.get("municipality"),
         "acres": p["acres"], "price": p.get("price"), "exclusion_category": p.get("exclusion_category"),
-        "redevelopment_watch": bool(p.get("redevelopment_watch"))} | {f: bool(p.get(f)) for f in FLAGS}
+        "redevelopment_watch": bool(p.get("redevelopment_watch")), "upper_bound_option": p.get("upper_bound_option"),
+        "upper_bound_rlv": p.get("upper_bound_rlv"), "blank_inputs": p.get("blank_inputs"),
+        "place_type": p.get("place_type"), "rear_lot_front_pin": p.get("rear_lot_front_pin")}         | {f: bool(p.get(f)) for f in FLAGS}
 
     def done(action: str, o: dict | None, reason: str, **extra) -> dict:
         if o:
             row.update(option=o["option"], option_kind=o["kind"], product=product(o["option"]), units=o["units"],
                        rlv=o["rlv"], score=None if p.get("price") is None else o["rlv"] - p["price"],
-                       unit_width_ft=o.get("unit_width_ft"))
+                       unit_width_ft=o.get("unit_width_ft"), price_per_sf=o.get("price_per_sf"))
+            # deal-sheet numbers: ARV = the option's homes' sale value; cash = (build + land) x (1 - LTC)
+            arv, build, price = o.get("revenue"), o.get("build_cost"), p.get("price")
+            row.update(arv=arv, build_cost=build,
+                       land_pct_of_arv=price / arv * 100 if arv and price is not None else None,
+                       cash_needed=(build + price) * (1 - box["loan_to_cost"])
+                       if build is not None and price is not None and box.get("loan_to_cost") is not None else None)
         return row | {"action": action, "reason": reason} | extra
 
     if p.get("exclusion_category"):
         return done("excluded", None, f"excluded: {p['exclusion_category']} ({p.get('excluded_reason')})"
                     + ("; on the redevelopment watch list" if p.get("redevelopment_watch") else ""))
 
-    valued = [o for o in options if o.get("rlv") is not None]
+    complete = lambda o: o.get("rlv") is not None and not o.get("blank_inputs")
+    valued = [o for o in options if complete(o)]
     # a partner's own-width townhome counts as a use only where that partner's limits fit it
     by_name = {pt["name"]: pt for pt in partners}
+    partner_rows = {name: [o for o in rows if complete(o)] for name, rows in partner_rows.items()}
     tagged = valued + [o for name, rows in partner_rows.items() for o in rows
-                       if o.get("rlv") is not None and not partner_misses(by_name[name], p, o)]
+                       if not partner_misses(by_name[name], p, o)]
     by_kind = lambda kind, rows: [o for o in rows if o["kind"] == kind]
     top = lambda rows: max(rows, key=lambda o: o["rlv"]) if rows else None
     b = top(by_kind("by_right", tagged))
     if b is None:
-        return done("skip", None, f"no by-right value ({p.get('no_value_reason') or 'no valued option'})")
-    row |= {"best_option": b["option"], "best_rlv": b["rlv"], "best_partner": b.get("partner")}
+        upper = (f"; upper bound {p['upper_bound_option']} {_money(p['upper_bound_rlv'])}, blank "
+                 f"{p.get('blank_inputs')}" if p.get("upper_bound_option") else "")
+        return done("skip", None, f"skip: no complete by-right value "
+                                  f"({p.get('no_value_reason') or 'no valued option'}){upper}")
+    row |= {"best_option": b["option"], "best_rlv": b["rlv"], "best_partner": b.get("partner"),
+            "best_price_per_sf": b.get("price_per_sf")}
     fam = product(b["option"])
     partner_products = {x for pt in partners for x in pt["products"]}
     mine = top([o for o in by_kind("by_right", valued) if product(o["option"]) in box["products"]])
@@ -213,8 +246,10 @@ def route_parcel(p: dict, options: list[dict], partner_rows: dict[str, list[dict
     if fam in box["products"]:
         misses = my_misses(box, p, b, county)
         if not misses:
+            arv = b.get("revenue")
             return done("build", b, f"build: {fmt(b)}, price {_money(p.get('price'))}, "
-                                    f"score {_money(b['rlv'] - p['price'])}")
+                                    f"score {_money(b['rlv'] - p['price'])}; comps {_money(b.get('price_per_sf'))}/sf, "
+                                    f"ARV {_money(arv)}, land {p['price'] / arv * 100:.1f}% of ARV")
         build_why = f"best use {fmt(b)} is mine but outside my buy box: {'; '.join(misses)}"
     else:
         build_why = None
@@ -249,6 +284,8 @@ def route_parcel(p: dict, options: list[dict], partner_rows: dict[str, list[dict
 
     # 4-5. Entitle / crossing candidate: enough uplift over the best by-right value, score > 0
     for action, kind in (("entitle", "rezoning"), ("crossing_candidate", "if_crossed")):
+        if kind == "rezoning" and p.get("place_type") not in routing["entitle_place_types"]:
+            continue
         o = top(by_kind(kind, tagged))
         if o and uplift_ok(o["rlv"], b["rlv"], routing) and p.get("price") is not None and o["rlv"] - p["price"] > 0:
             return done(action, o, f"{action}: {fmt(o)} vs by-right {fmt(b)}, +{_money(o['rlv'] - b['rlv'])}; "
@@ -267,11 +304,13 @@ def route_parcel(p: dict, options: list[dict], partner_rows: dict[str, list[dict
 # ---------------------------------------------------------------- run over every parcel
 
 RLV_COLS = ["pin", "site_address", "municipality", "area_sf", "scored_on", "price", "score", "exclusion_category",
-            "excluded_reason", "redevelopment_watch", "verify_sewer", "no_value_reason"]
+            "excluded_reason", "redevelopment_watch", "verify_sewer", "no_value_reason", "upper_bound_option",
+            "upper_bound_rlv", "blank_inputs", "rail_on_parcel", "rear_lot_with_house", "rear_lot_front_pin"]
 YIELD_COLS = ["pin", "jurisdiction", "base_district", "net_sf", "if_crossed_net_sf", "lot_width_ft", "townhome_units",
               "townhome_needs_rezoning", "townhome_target_district", "if_crossed_townhome_units", "no_frontage",
-              "creek_divides", "apartments_possible"]
-OPT_COLS = ["pin", "option", "sewer", "kind", "product", "units", "rlv"]
+              "creek_divides", "apartments_possible", "place_type"]
+OPT_COLS = ["pin", "option", "sewer", "kind", "product", "units", "rlv", "unit_price", "blank_inputs",
+            "price_per_sf", "revenue", "build_cost"]
 
 
 def townhome_candidates(p: dict, partners: list[dict], county: str) -> list[dict]:

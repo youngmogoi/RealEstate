@@ -35,7 +35,8 @@ def manual_layers() -> list[tuple[str, str]]:
         "fema_floodplain": "FEMA Floodplain", "community_floodplain": "Community Floodplain",
         "streams": "Creeks and Streams",
     }
-    layers += [(names.get(k, k), spec["file"]) for k, spec in constraints["layers"].items()]
+    # dated downloads (rail, `make rail`) refresh themselves in the weekly run
+    layers += [(names.get(k, k), spec["file"]) for k, spec in constraints["layers"].items() if "*" not in spec["file"]]
     return layers
 
 

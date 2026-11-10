@@ -44,6 +44,16 @@ layers:
     class: flag
     flag_group: floodplain
     exclude: {FLD_ZONE: ["0.2 PCT ANNUAL CHANCE FLOOD HAZARD"]}
+  rail:
+    # Railroad track centerlines (decided 2026-11-09): US DOT BTS National Transportation Atlas
+    # (NTAD) North American Rail Network, downloaded by `make rail` (see rail_download below) into
+    # dated files; the newest is used. Buffered by buffer_ft on each side into unbuildable land; a
+    # parcel it touches is flagged rail_on_parcel. NET: M main, O other, I industrial, Y yard,
+    # S siding, X out of service (track still there), A abandoned and T trail (dropped).
+    file: data/raw/constraints/Rail/rail_lines_*.geojson
+    class: unbuildable
+    buffer_ft: 25                  # (draft) track + clearance each side of the centerline
+    exclude: {NET: ["A", "T"]}
   streams:
     # lines: stream length inside the parcel, for evidence only
     file: data/raw/constraints/Creeks_Streams/Creeks_Streams.shp
@@ -80,3 +90,10 @@ septic_soils:
   rule: ENG - Septic Tank Absorption Fields
 
 derived_dir: data/raw/constraints/derived
+
+# `make rail` (ingest/rail.py): every NTAD rail line inside the county parcels' extent, saved as
+# <download_dir>/rail_lines_<date>.geojson (WGS84). Older files are kept as history.
+rail_download:
+  url: https://services.arcgis.com/xOi1kZaI0eWDREZv/arcgis/rest/services/NTAD_North_American_Rail_Network_Lines/FeatureServer/0
+  fields: [FRAARCID, RROWNER1, NET, TRACKS, SUBDIV, YARDNAME, PASSNGR]
+  download_dir: data/raw/constraints/Rail

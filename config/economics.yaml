@@ -4,15 +4,15 @@
 # Draft cost values added 2026-10-28 from a Phoenix duplex build breakdown (2024, 3,000 sf,
 # $478,634) and its rules of thumb. Replace with my own Charlotte numbers as I get them.
 #
-# Two models (decided 2026-10-28):
-#   House model (lot as is, lot splits, townhomes):
-#     RLV = buildings x (sale price - build cost - soft costs - selling costs - financing
-#                        - target profit) - absorption discount
-#           + ADU premium + retained house - demolition - site work - obligations
-#   Lot model (subdivisions: standard, conservation, compact, mixed income, and their if_crossed):
-#     RLV = lots x finished lot price - absorption discount - lots x development cost per lot
-#           - demolition - site work - obligations
-# Absorption discount and the project cap apply to subdivisions and townhomes ("projects").
+# Simple model (decided 2026-11-09; the detailed parts are switched off under `options`):
+#   House model (lot as is, lot splits, townhomes), per building:
+#     build = max(build_cost_per_sf x house size, build_cost_min_pct_of_sale x sale price)
+#     RLV = buildings x (sale price - build - soft - selling - carry - target profit)
+#           + retained house - demolition - road and stormwater (new lots) - rollback estimate
+#   Lot model (standard subdivision):
+#     RLV = lots x finished lot price - lots x development cost per lot - demolition - site work
+#   Townhomes and subdivisions ("projects") are then cut by project_discount_pct and capped at
+#   max_lots_per_project.
 #
 # Blank (null) values: the three core costs are required; while any is blank, `make rlv` builds
 # the comps and sales ratios and then stops without computing RLV. lot_to_home_ratio and
@@ -21,20 +21,19 @@
 # an upper bound, flagged rlv_incomplete, with the missing names in blank_inputs.
 
 costs:
-  # $ per heated sf, hard construction cost incl. ~5% contingency, excl. land and demolition.
-  # Now per product type (was one value). (draft)
-  # Source: Phoenix duplex hard costs $111/sf + 5% contingency = $116; houses from the video's
-  # rule of thumb (~$140/sf all-in) / 1.13 soft costs = ~$124.
+  # $ per heated sf, ALL-IN (hard + soft: design, permits and fees, engineering, insurance, utility
+  # tie-ins ...), excl. land, demolition, selling and carry (decided 2026-11-09, my rule of thumb). (draft)
   build_cost_per_sf:
-    sfh: 124
-    duplex_triplex: 116          # also used for quadraplex
-    townhome: 116                # assumed similar grade to duplex; confirm
-  # % of build cost: design/drafting, permits and impact fees, engineering and survey, soil test,
-  # utility tie-ins, insurance and builder's risk, property tax during the build, marketing,
-  # dumpsters, fencing, site security. Financing is now its own section below. (draft; Phoenix
-  # duplex $42,375 soft + builder's risk / $332,074 hard = 12.8%)
-  soft_cost_pct: 13
-  # % of the sale price, NET of selling costs and financing (both below). (draft; the Phoenix
+    sfh: 140
+    duplex_triplex: 130          # also used for quadraplex
+    townhome: 130                # assumed similar grade to duplex; confirm
+  # Build cost per unit = max(build_cost_per_sf x house size, this % x the unit's sale price):
+  # a floor so high-end homes aren't built at a cheap-house cost (decided 2026-11-09). (draft)
+  build_cost_min_pct_of_sale: 40
+  # Soft costs are inside build_cost_per_sf (all-in), so 0 here to avoid counting them twice
+  # (decided 2026-11-09).
+  soft_cost_pct: 0
+  # % of the sale price, NET of selling and carry costs (both below). (draft; the Phoenix
   # deal made ~23% of sales before selling and financing costs)
   target_profit_pct: 15
   # $ per existing heated sf (CAMA), on every option that removes a building. (draft; Phoenix
@@ -45,25 +44,14 @@ selling:
   # % of the sale price: agent commissions + seller closing costs, on every unit sold. (draft)
   selling_cost_pct: 6
 
-financing:
-  # Construction loan carry on the house model (added 2026-10-28). Loan = loan_to_cost x (build
-  # cost + soft costs + land). Land in the loan = the parcel's price estimate (price section
-  # below), not its RLV, to avoid a circular calculation. Interest = loan x rate x
-  #   (build_months / 12 x avg_draw_during_build + months_to_sell / 12 x 1.0)
-  # plus loan_closing_pct x loan. For projects, applied per building on its own schedule.
-  loan_to_cost: 0.75             # banks lend 70-80% of build + land (video rule of thumb) (draft)
-  construction_rate_pct: null    # my current construction loan rate (you fill in)
-  loan_closing_pct: null         # loan fees and closing, % of the loan (you fill in)
-  build_months: 6                # Phoenix duplex took 6 months (draft)
-  months_to_sell: 3              # (draft)
-  avg_draw_during_build: 0.5     # average share of the loan drawn while building (draft)
+# Carry (decided 2026-11-09; replaces the construction loan model): % of the sale price on the
+# house model, for interest, loan fees and holding costs while building and selling. (draft)
+carry_cost_pct: 3.5
 
 site_work:
-  sewer_per_ft: null             # $ per ft of sewer extension; used only where a sewer distance is known (none yet)
+  # Slope, floodplain and sewer extension are not costed for now (options below); their flags stay.
   road_per_ft: null              # $ per ft of the parcel's street frontage; options that create lots or townhomes
   stormwater_per_unit: null      # $ per unit; options that create lots or townhomes
-  slope_per_acre: null           # $ per acre of 15-25% slope on the parcel; every option
-  floodplain_per_unit: null      # $ per unit whose building falls in the 1% floodplain flag
   creek_crossing: null           # $ per parcel, added to the if_crossed options only (CLAUDE.md, buildable pieces)
   # Road and stormwater only on options that create lots or townhomes, not the lot as it is
   # (confirmed 2026-10-28).
@@ -78,11 +66,9 @@ subdivision:
   development_cost_per_lot: null
 
 project:
-  # Subdivisions and townhomes sell over time: months = ceil(units / absorption); sales are spread
-  # evenly and each month's revenue is discounted at the annual rate. House model: the margin is
-  # discounted (costs come with each sale); lot model: lot revenue is (development is up front).
-  absorption_homes_per_month: null
-  annual_discount_rate_pct: null
+  # Townhome and subdivision RLVs are cut by this % for sell-out time and project risk (decided
+  # 2026-11-09; replaces absorption and a discount rate). (draft)
+  project_discount_pct: 15
   # Lots or units valued per project; larger yields are valued at the cap and flagged
   # over_project_cap. Blank = no cap.
   max_lots_per_project: null
@@ -102,6 +88,19 @@ obligations:
   affordable_max_price_year: null
 
 adu_premium: null                # $ added to the main unit's price where an ADU is allowed (never a sale unit)
+
+# Model switches (decided 2026-11-09): false = the option or cost is not valued at all (no blank, no
+# flag from it). The detailed code stays and is tested; turn one on to use it again.
+options:
+  sub_conservation: false
+  sub_compact: false
+  sub_mixed_income: false
+  obligations: false            # affordable units in quadraplex / mixed income valued at market
+  if_crossed_valuation: false   # creek_divides and the cut-off acres stay as flags
+  adu_premium: false
+  slope_cost: false
+  floodplain_cost: false
+  sewer_extension_cost: false
 
 comps:
   # New-construction sales: arm's-length (blank validity code: no disqualification; blank has been
@@ -125,6 +124,9 @@ comps:
   # min_comps, from all nearby single-family comps (lot_band_fallback), and the house size cap from
   # the band's countywide median. Townhomes (no lot of their own) and the plex proxy aren't banded.
   lot_bands_sf: [0, 5000, 8000, 12000, 20000, 43560]
+  # $/sf tiers of the comps that price an option (build cost by tier, backtest report): <250,
+  # 250-350, 350-500, 500-750, 750+ (decided 2026-10-28)
+  price_tiers_per_sf: [0, 250, 350, 500, 750]
   products:
     sfh: ["SINGLE FAMILY RESIDENTIAL"]
     townhome: ["TOWNHOUSE"]
@@ -172,25 +174,19 @@ land_price:
   min_sales: 20
   acre_bands: [0, 1, 5]          # under 1, 1-5, 5+ (5-20 had 32 sales and 20+ had 3 countywide)
 
+buildability:
+  # A house on the lot as it is (cur_* options; decided 2026-11-09) needs street access and room:
+  # frontage of at least min_frontage_ft (0 = landlocked; access through a common area also counts),
+  # and buildable land (net_sf, outside creek buffers, floodways and rail) at least the house's
+  # footprint (size / floors). Otherwise the option gets no value and the reason is in its notes.
+  min_frontage_ft: 20            # (draft) check Charlotte's minimum for a flag-lot driveway
+  house_must_fit_buildable: true
+
 rollback_tax:
-  # Developing present-use land ends the deferral: the deferred taxes for the current year and
-  # the 3 before it come due, with interest (G.S. 105-277.4(c)). Deferred value = CAMA market value
-  # - taxable value, used for every year (an estimate). Interest per year i back (i = 0 current):
-  # 0, else first_month_pct + monthly_pct x (12 i - 1). Charged on every option of an enrolled parcel.
-  years: 4
-  interest_first_month_pct: 2
-  interest_monthly_pct: 0.75
-  # Combined county + municipal rate, $ per $100 of value, by parcel municipality (you fill in)
-  tax_rate_per_100:
-    CHARLOTTE: null
-    CORNELIUS: null
-    DAVIDSON: null
-    HUNTERSVILLE: null
-    MATTHEWS: null
-    MINT HILL: null
-    PINEVILLE: null
-    STALLINGS: null
-    MECKLENBURG COUNTY-UNINCORPORATED: null
+  # Developing present-use land ends the deferral and the deferred taxes come due (G.S. 105-277.4(c)).
+  # Estimate (decided 2026-11-09): deferred value (CAMA market - taxable) x rollback_rate_pct x years.
+  rollback_rate_pct: 1.2        # (draft) about the combined county + city rate
+  years: 4                      # the current year + 3 before it
 
 score:
   # Never scored or ranked (decided 2026-10-28; CLAUDE.md Phase 2.4): RLV is still computed and
@@ -199,6 +195,9 @@ score:
     government: government
     church_nonprofit: church_nonprofit
   exclude_access_via_common_area: true       # HOA land reached only through common area
+  # Shapes with no county tax account (no owner, no land use; decided 2026-10-28): lake and river
+  # shapes (PINs ...W01, ...M01), and S, X, R, A, L lettered shapes; 184 with by-right yield.
+  exclude_no_tax_record: true
   # County land use (parcel_features.land_use), as shell patterns: * = anything.
   exclude_land_uses:
     golf_course: ["GOLF COURSE*"]            # not "SINGLE FAMILY RESIDENTIAL - GOLF" (homes on courses)
@@ -208,8 +207,14 @@ score:
                  "MULTI FAMILTY AFFORDABLE HOUSING"]   # sic; duplex/triplex stays in
     condominium: ["CONDOMINIUM", "CONDOMINIUM HIGH RISE"]
     cemetery: ["*CEMETERY*"]
-    hoa_common_area: ["*COMMON*"]
-    government: ["SCHOOL - PUBLIC", "RIGHT OF WAY", "AIR RIGHTS*"]
+    # COS NO AV10 = Common Open Space with no active property tax (you, 2026-11-09)
+    hoa_common_area: ["*COMMON*", "COS NO AV10", "REC AREA"]
+    government: ["SCHOOL - PUBLIC", "RIGHT OF WAY", "AIR RIGHTS*", "STATE PROP", "AIRPORT", "MUNICIPAL AIRPORT",
+                 "OTHER COUNTY PROPERTY", "OTHER FEDERAL"]
+    # Land the county itself classes as unbuildable or a corridor (decided 2026-11-09)
+    unbuildable: ["FLUM/SWIM FLOODWAY (NO BUILD ZONE)", "100 YEAR FLOOD PLAIN - AC", "WASTELAND, SLIVERS*",
+                  "PVT OWNED RR WITH RAIL ROW", "SUBMERGED LAND*", "ROADWAY CORRIDOR", "BUFFER STRIP",
+                  "UNSUITABLE FOR SEPTIC", "GREENWAY TRAIL"]
     utility: ["UTILITY*"]
     church_nonprofit: ["CHURCH"]
     healthcare: ["NURSING HOME", "HOME FOR THE AGED", "*HOSPITAL*", "*ASSISTED LIVING*"]

@@ -8,8 +8,17 @@ import scoring.rlv as R
 import scoring.route as T
 from tests.test_rlv import COMPS, ECON, FEAT, P, RATIOS, RULES, CFG, Y
 
-PARTNERS_CFG, BOX = T.load_config()
-TEST_PARTNER = PARTNERS_CFG["partners"][0]
+PARTNERS_CFG, BOX_CFG = T.load_config()
+# My buy box with the first drafts pinned (the 2026-11-09 rules of thumb are tested on their own below)
+BOX = BOX_CFG | {"products": ["sfh", "duplex", "triplex"], "max_units_per_parcel": 4, "acres_min": 0.1,
+                 "acres_max": 3, "max_price": 400000, "min_score": 50000, "max_sale_price_per_home": None,
+                 "counties": ["Mecklenburg"], "areas": ["Charlotte"], "sewer_required": True,
+                 "min_resale_per_sf": None, "max_land_pct_of_arv": None, "loan_to_cost": 0.75}
+# Fixed here so the tests don't move when partners.yaml is edited (the test partner as first seeded)
+TEST_PARTNER = {"name": "TEST PARTNER - not real", "products": ["townhome"], "counties": ["Mecklenburg"],
+                "areas": ["all"], "acres_min": 3, "acres_max": 15, "density_min": 6, "density_max": 12,
+                "sewer_required": True, "max_land_price_per_unit": 40000, "townhome_unit_width_ft": 22,
+                "payment_structure": "assignment fee"}
 ROUTING = PARTNERS_CFG["routing"]
 ACRES_21311502 = 262031.6 / 43560          # 6.0154 ac (8625 Sardis Rd)
 
@@ -34,14 +43,11 @@ def route(pin: str, zone: str | None = None, partners: list[dict] | None = None,
     return T.route_parcel(p, opts, prows, partners, box, routing)
 
 
-def test_config_seeded():
-    assert TEST_PARTNER == {"name": "TEST PARTNER - not real", "products": ["townhome"], "counties": ["Mecklenburg"],
-                            "areas": ["all"], "acres_min": 3, "acres_max": 15, "density_min": 6, "density_max": 12,
-                            "sewer_required": True, "max_land_price_per_unit": 40000, "townhome_unit_width_ft": 22,
-                            "payment_structure": "assignment fee"}
-    assert (ROUTING["entitle_min_uplift_pct"], ROUTING["entitle_min_uplift_usd"]) == (25, 250000)
-    assert BOX["products"] == ["sfh", "duplex", "triplex"] and BOX["areas"] == ["Charlotte"]
-
+def test_config_has_every_partner_field():
+    fields = set(TEST_PARTNER)
+    assert all(set(pt) >= fields for pt in PARTNERS_CFG["partners"])
+    assert {"entitle_min_uplift_pct", "entitle_min_uplift_usd", "entitle_place_types"} <= set(ROUTING)
+    assert set(BOX) <= set(BOX_CFG)
 
 def test_product_of_options():
     assert [T.product(o) for o in ("cur_sfh", "split_triplex_keep_house", "sub_compact", "townhome",
@@ -118,8 +124,14 @@ def test_crossing_candidate_and_entitle_21311502():
     s = route("21311502")
     assert (s["action"], s["option"], s["units"]) == ("crossing_candidate", "if_crossed_townhome", 46)
     assert s["rlv"] == pytest.approx(2324425.89, abs=0.01) and s["best_option"] == "sub_conservation"
-    # lower thresholds (10%, $200k): the rezoning comes first -> entitle
-    s = route("21311502", routing=ROUTING | {"entitle_min_uplift_pct": 10, "entitle_min_uplift_usd": 200000})
+    # lower thresholds (10%, $200k) clear the rezoning's uplift, but its place type is Neighborhood 1
+    # (N1 -> N1-F): never entitle (decided 2026-10-28), so still the crossing candidate
+    low = ROUTING | {"entitle_min_uplift_pct": 10, "entitle_min_uplift_usd": 200000}
+    s = route("21311502", routing=low)
+    assert (s["action"], s["place_type"]) == ("crossing_candidate", "Neighborhood 1")
+    # the same values where the place type allows it: entitle comes first
+    p, opts, prows = setup("21311502")
+    s = T.route_parcel(p | {"place_type": "Neighborhood 2"}, opts, prows, [TEST_PARTNER], BOX, low)
     assert (s["action"], s["option"], s["option_kind"]) == ("entitle", "townhome", "rezoning")
     assert s["rlv"] == pytest.approx(1814185.02, abs=0.01)
 
@@ -156,3 +168,49 @@ def test_mining_excluded_and_watched():
     score = copy.deepcopy(R.load_config()[0]["score"])
     assert R.exclusion({"land_use": "MINING"}, score) == ("mining", "land use MINING")
     assert "mining" in score["redevelopment_watch"]
+
+
+def test_incomplete_options_never_compete_21311502():
+    # road_per_ft blank: every option that creates lots or townhomes is incomplete. The routed best
+    # use is the complete cur_sfh; parcel_rlv's upper bound (conservation) is carried as such.
+    econ = copy.deepcopy(ECON)
+    econ["site_work"]["road_per_ft"] = None
+    y = Y.compute_yield(P["21311502"], RULES, CFG)
+    p_in = y | FEAT["21311502"] | {"lot_depth_ft": P["21311502"]["lot_depth_ft"]}
+    row, opts = R.score_parcel(p_in, COMPS, RULES, econ, CFG, RATIOS)
+    p = row | {k: y.get(k) for k in T.YIELD_COLS} | {"acres": row["area_sf"] / R.SQFT_PER_ACRE}
+    s = T.route_parcel(p, opts, {}, [TEST_PARTNER], BOX, ROUTING)
+    assert s["best_option"] == "cur_sfh" and s["upper_bound_option"] == "sub_conservation"
+    assert s["blank_inputs"] == "road_per_ft"
+    # nothing complete at all: skip, naming the upper bound
+    s = T.route_parcel(p | {"upper_bound_option": "split_sfh", "upper_bound_rlv": 1.0}, [o | {"blank_inputs": "x"} for o in opts],
+                       {}, [TEST_PARTNER], BOX, ROUTING)
+    assert s["action"] == "skip" and "no complete by-right value" in s["reason"] and "upper bound split_sfh" in s["reason"]
+
+
+def test_max_sale_price_per_home_02708315():
+    # cur_sfh home = 3,000 sf x $250 = 750,000
+    box = BOX | {"min_score": None}
+    assert route("02708315", box=box | {"max_sale_price_per_home": 800000})["action"] == "build"
+    s = route("02708315", box=box | {"max_sale_price_per_home": 700000})
+    assert s["action"] == "skip" and "home $750,000 > $700,000" in s["reason"]
+
+
+def test_rules_of_thumb_02708315():
+    # cur_sfh: comps $250/sf, ARV 3,000 sf x 250 = 750,000; price 393,840 = 52.5% of ARV
+    box = BOX | {"min_score": None, "min_resale_per_sf": 230, "max_land_pct_of_arv": 15}
+    s = route("02708315", box=box)
+    assert s["action"] == "skip" and "land 52.5% of ARV > 15%" in s["reason"]
+    s = route("02708315", box=box | {"max_land_pct_of_arv": 60})
+    assert s["action"] == "build" and "ARV $750,000, land 52.5% of ARV" in s["reason"]
+    # comps must sell for at least min_resale_per_sf
+    s = route("02708315", box=box | {"max_land_pct_of_arv": 60, "min_resale_per_sf": 260})
+    assert s["action"] == "skip" and "comps $250/sf < $260/sf" in s["reason"]
+
+
+def test_deal_sheet_numbers_02708315():
+    # build at test costs 150 x 3,000 = 450,000; land (price) 393,840; cash = (450,000 + 393,840) x 0.25
+    s = route("02708315", box=BOX | {"min_score": None})
+    assert (s["arv"], s["build_cost"], s["price_per_sf"]) == (750000, 450000, 250)
+    assert s["land_pct_of_arv"] == pytest.approx(393840 / 750000 * 100)
+    assert s["cash_needed"] == pytest.approx(210960)

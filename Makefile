@@ -1,4 +1,4 @@
-.PHONY: up down test ingest cama addresses ingest-nconemap zoning utilities constraints streets place-types features pieces changes weekly refresh-manual udo zoning-rules yield rlv route score digest
+.PHONY: up down test ingest cama addresses ingest-nconemap zoning utilities constraints streets place-types features pieces changes weekly refresh-manual udo zoning-rules yield rlv route backtest score digest rail
 
 .env:
 	cp .env.example .env
@@ -39,6 +39,9 @@ place-types:
 streets:
 	uv run python -m ingest.streets
 
+rail:
+	uv run python -m ingest.rail
+
 features:
 	uv run python -m features.build
 
@@ -68,6 +71,9 @@ rlv:
 
 route:
 	uv run python -m scoring.route
+
+backtest:
+	uv run python -m scoring.backtest
 
 score: route
 

@@ -59,9 +59,20 @@ def file_date(path: Path) -> date:
     return datetime.fromtimestamp(os.path.getmtime(path)).date()
 
 
+def layer_file(spec: dict) -> Path:
+    """The layer's file; a pattern with * (dated downloads) means the newest match by name."""
+    if "*" not in spec["file"]:
+        return ROOT / spec["file"]
+    found = sorted(ROOT.glob(spec["file"]))
+    if not found:
+        raise SystemExit(f"no file matches {spec['file']} (for rail lines run `make rail`)")
+    return found[-1]
+
+
 def read_layer(name: str, spec: dict) -> gpd.GeoDataFrame:
-    """One configured layer as [layer, class, attrs, geometry] in EPSG:2264."""
-    gdf = pyogrio.read_dataframe(ROOT / spec["file"], layer=spec.get("layer"))
+    """One configured layer as [layer, class, attrs, geometry] in EPSG:2264. Lines with buffer_ft
+    become polygons that far out on each side."""
+    gdf = pyogrio.read_dataframe(layer_file(spec), layer=spec.get("layer"))
     for col, value in (spec.get("where") or {}).items():
         gdf = gdf[gdf[col] == value]
     for col, values in (spec.get("exclude") or {}).items():
@@ -69,6 +80,8 @@ def read_layer(name: str, spec: dict) -> gpd.GeoDataFrame:
     gdf = gdf.to_crs(CRS_EPSG) if gdf.crs.to_epsg(min_confidence=20) != CRS_EPSG else gdf.set_crs(CRS_EPSG, allow_override=True)
     attrs = gdf.drop(columns="geometry").astype(str).to_dict("records")
     geoms = gdf.geometry
+    if spec.get("buffer_ft"):
+        geoms = geoms.buffer(spec["buffer_ft"])
     if geoms.geom_type.str.contains("Polygon").all():
         geoms, _ = fix_geometries(geoms)
     return gpd.GeoDataFrame({
@@ -375,8 +388,9 @@ def read_vectors(cfg: dict, log=print) -> tuple[gpd.GeoDataFrame, dict[str, date
     frames, dates = [], {}
     for name, spec in cfg["layers"].items():
         g = read_layer(name, spec)
-        dates[name] = file_date(ROOT / spec["file"])
-        frames.append(g.assign(source=spec["file"], source_date=dates[name]))
+        path = layer_file(spec)
+        dates[name] = file_date(path)
+        frames.append(g.assign(source=path.relative_to(ROOT).as_posix(), source_date=dates[name]))
         log(f"  {name}: {len(g):,} shapes ({spec['class']})")
     so = cfg["septic_soils"]
     derived = ROOT / cfg["derived_dir"]

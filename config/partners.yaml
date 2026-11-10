@@ -19,10 +19,10 @@ partners:
     products: [townhome]
     counties: [Mecklenburg]
     areas: [all]
-    acres_min: 3
-    acres_max: 15
+    acres_min: 5
+    acres_max: 30
     density_min: 6
-    density_max: 12
+    density_max: 
     sewer_required: true
     max_land_price_per_unit: 40000
     townhome_unit_width_ft: 22
@@ -36,3 +36,9 @@ routing:
   # When the by-right value is 0 or negative, the % test passes. (defaults, decided 2026-10-28)
   entitle_min_uplift_pct: 25
   entitle_min_uplift_usd: 250000
+  # Entitle only where the 2040 Policy Map place type is Neighborhood 2 or higher intensity
+  # (decided 2026-10-28; not Neighborhood 1 -> N1-F). The rezoning yield uses the target district's
+  # townhome rule (zoning_rules.yaml rezoning_targets); only Neighborhood 2 -> N2-A has a target
+  # district so far, so the others yield no rezoning option until their districts get rules.
+  entitle_place_types: [Neighborhood 2, Neighborhood Center, Community Activity Center,
+                        Regional Activity Center, Innovation Mixed-Use]

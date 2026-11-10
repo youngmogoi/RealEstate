@@ -56,12 +56,37 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   value and score > 0. Townhome partners: yield and RLV recomputed at their unit width; a partner
   version counts only where its density and land $/unit fit. apartments_possible = parcel_yield
   (types.multifamily_stacked, UDO Table 15-1).
-- Costs (decided 2026-10-28, economics.yaml; draft values from a Phoenix duplex breakdown):
-  build_cost_per_sf per product (sfh, duplex_triplex = every plex, townhome; a blank product gets no
-  house-model RLV); selling.selling_cost_pct on every unit sold; financing (house model only):
-  loan = loan_to_cost x (build + soft + land at the parcel's PRICE estimate, not its RLV), interest =
-  loan x rate x (build_months/12 x avg_draw_during_build + months_to_sell/12), plus loan_closing_pct.
-  The lot model (subdivisions) has neither. Soft cost excludes financing; profit is on the sale price.
+- Decided 2026-10-28 (round 5): options with blank inputs never compete with complete ones; the best
+  use, rezoning and if-crossed values and routing use complete RLVs only, and a higher incomplete
+  option is stored beside them as upper_bound_option/rlv. Entitle only where the place type is in
+  partners.yaml routing.entitle_place_types (Neighborhood 2 or higher; not N1 -> N1-F). Shapes with no
+  tax account (lake PINs ...W01/...M01 and other lettered shapes) are excluded as no_tax_record.
+  build_cost_per_sf_by_tier (comps.price_tiers_per_sf) and my_buybox max_sale_price_per_home are
+  prepared blank. Backtest: `make backtest` (scoring/backtest.py, config/backtest.yaml) ->
+  reports/backtest_<date>.md and backtest_townhomes_<date>.md (rough per-lot); it never changes config.
+- Simple RLV model (decided 2026-11-09, economics.yaml): build cost per unit = max(build_cost_per_sf
+  x size, build_cost_min_pct_of_sale x sale price); carry_cost_pct of the sale price (replaces the
+  loan model); project_discount_pct off townhome and subdivision RLVs (replaces absorption); rollback
+  estimate = deferred value x rollback_rate_pct x years. `options` switches (all false): conservation,
+  compact, mixed-income subdivisions, obligations, if-crossed valuation (creek_divides stays a flag),
+  ADU premium, slope, floodplain and sewer-extension costs. Off = not valued, no blank. The detailed
+  code stays (a missing switch or key = the detailed model) and tests/test_rlv.py ECON still checks it;
+  SIMPLE there checks the simple one. build_cost_per_sf_by_tier removed from config (code ignores it).
+- Rules of thumb (decided 2026-11-09): build_cost_per_sf is all-in (hard + soft), so soft_cost_pct = 0.
+  Build also needs the option's comps >= my_buybox min_resale_per_sf (230) and price <= max_land_pct_of_arv
+  (15%) of its ARV (= the option's homes' sale value). scores stores arv, land_pct_of_arv, build_cost and
+  cash_needed = (build + land) x (1 - my_buybox loan_to_cost) for the deal sheet.
+- Buildability (decided 2026-11-09, after your review of the top 10: 6 landlocked, 1 rail): a house on
+  the lot as is (cur_*) needs frontage >= economics buildability.min_frontage_ft (20, draft) or access
+  via common area, and net_sf >= the house footprint (size / floors); else no value, reason in notes.
+  Landlocked rear lots keep rear_lot_front_pin (same owner's touching street parcel, one with a house
+  first) and rear_lot_with_house. Excluded land uses added: COS NO AV10 (Common Open Space, no active
+  tax) and REC AREA (hoa_common_area); state, airport, other county/federal (government); floodway
+  no-build, 100-year floodplain acreage, wasteland/slivers, private RR ROW, submerged, roadway corridor,
+  buffer strip, unsuitable for septic, greenway trail (unbuildable). Rail: `make rail` (ingest/rail.py)
+  saves NTAD rail lines as data/raw/constraints/Rail/rail_lines_<date>.geojson; the constraints `rail`
+  layer buffers the newest by buffer_ft (25, draft) into unbuildable land (rail_acres, rail_on_parcel;
+  it also cuts pieces). The city map server has no rail layer.
 - Zoning rules (Phase 2.1, decided 2026-10-28; config/zoning_rules.yaml, check with
   `make zoning-rules`, ordinances via `make udo` into data/raw/udo/ with manifest.csv):
   townhome = UDO "Multi-Family Attached Unit". Yield is stored per housing type (sfh, duplex,
@@ -161,6 +186,10 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   inside scoring, never on deal sheets, maps, or anything shared.
 - Charlotte Water capital projects are in the city CIP "View of Polygons" layer (MapServer/23),
   not the lines layer, which holds only street and bike projects.
+- TODO: building permits as their own ingest (Mecklenburg Code Enforcement / Charlotte permit data,
+  downloaded by hand). The backtest (2026-10-28) uses a proxy until then: sold as vacant, and CAMA now
+  shows a building built in or after the sale year (misses houses under construction). Permits are
+  also a builder-activity signal (who is building where, how fast).
 - TODO (Phase 3): sewer source 2, Charlotte Water comments in rezoning staff analyses, is
   deferred to share the minutes watcher's scraper and extractor. Findings from 2026-10-27:
   the city's Legistar API (webapi.legistar.com/v1/charlottenc) lists "Zoning Hearing"
@@ -221,6 +250,10 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   nursing home, public, park/pool ...) is excluded, unless its land use is residential and its owner is
   not an institution (guard: address uses go stale, e.g. new houses on 1700-1800 Rama Rd still say OTHER
   INSTITUTIONAL; home day cares). Guarded or mixed parcels are flagged institutional_address. 81 / 101.
+- 2026-10-28: parcels with several tax accounts get NO owner, address or municipality in `parcels`
+  (ingest fills them only for single-account parcels, meant for condos). 4,481 parcels; e.g. A/B
+  accounts of a parcel split by a town limit (03515329: A in Charlotte, B unincorporated). Their
+  owner_type is blank too, so government land there isn't excluded. Not fixed yet (asked).
 - CAMA (Tax Parcel CAMA Data, `make cama` -> parcel_cama): one row per building; heatedarea is
   account-level (the houses' total, but not on apartment complexes). vacorimprov "VAC" sits on
   ~7,800 accounts with a building: don't use it for vacant. resunits is 0/blank on most plexes.
