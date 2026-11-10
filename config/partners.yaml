@@ -52,3 +52,11 @@ routing:
     neighbor_land_uses: ["SINGLE FAMILY%"]   # SQL LIKE patterns on parcel_features.land_use
     min_neighbors: 5
     min_ratio_pct: 20                        # (draft)
+  # More land checks (decided 2026-11-09), same hold (check_land) for parcels that would be acted on:
+  # a mapped creek on a lot under creek_max_acres (a creek takes most of a small lot; bigger tracts
+  # are handled by the buffers, pieces and creek_divides), or a transmission line mapped within
+  # power_line_ft (the line layer is off by 100+ ft; 2734 Monroe Rd's is mapped 139 ft away). Your
+  # verdicts in config/land_checks.yaml (ok / no) override every check.
+  land_checks:
+    creek_max_acres: 2                       # (draft)
+    power_line_ft: 150                       # (draft)

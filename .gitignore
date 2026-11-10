@@ -15,3 +15,6 @@ __pycache__/
 
 # Weekly run logs
 logs/
+
+# CSV exports (owner names)
+exports/

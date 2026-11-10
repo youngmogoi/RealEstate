@@ -17,7 +17,10 @@ zoning, parcel shape and economics.yaml, with the price paid as the price (so th
 what was paid). Compared: the RLV of the option matching what was built (the lot as it is), with
 the best-use RLV beside it. Options with blank inputs are upper bounds and counted as such.
 
-Ratio = RLV / price paid: above 1, the model would have paid more than the buyer did.
+Ratio = RLV / price paid: above 1, the model would have paid more than the buyer did. RLV already
+takes out my profit, so a well-calibrated model sits near 1.0. Groups: product, comp $/sf band
+(backtest.yaml report_bands_per_sf), municipality. Also the share of sales whose price paid met my
+land rule (my_buybox max_land_pct_of_arv; ARV = the matching option's home sale value).
 """
 
 import argparse
@@ -30,6 +33,7 @@ import yaml
 from sqlalchemy import Engine, text
 
 import scoring.rlv as R
+import scoring.route as T
 from ingest.db import get_engine
 from scoring.zoning_rules import load_rules
 
@@ -109,6 +113,8 @@ def value_sale(p_in: dict, sale: dict, comps: dict, rules: dict, econ: dict, sco
         "option": o and o["option"], "rlv": rlv, "complete": bool(o) and not o.get("blank_inputs"),
         "blank_inputs": o and o.get("blank_inputs"), "price_tier": o and o.get("price_tier"),
         "price_per_sf": o and o.get("price_per_sf"), "comp_count": o and o.get("comp_count"),
+        "municipality": row.get("municipality") or "(none)", "arv": o and o.get("revenue"),
+        "land_pct_of_arv": sale["sale_price"] / o["revenue"] * 100 if o and o.get("revenue") else None,
         "comp_radius_mi": o and o.get("comp_radius_mi"), "size_sf": o and o.get("size_sf"),
         "home_price": o and o.get("home_price"), "ratio": None if rlv is None else rlv / sale["sale_price"],
         "best_option": row["best_option"], "best_rlv": row["best_rlv"], "upper_bound_option": row["upper_bound_option"],
@@ -120,12 +126,15 @@ def value_sale(p_in: dict, sale: dict, comps: dict, rules: dict, econ: dict, sco
     }
 
 
-def stats(df: pd.DataFrame) -> dict:
-    """n, complete, median and spread of RLV / price paid, and absolute % errors."""
+def stats(df: pd.DataFrame, land_cap: float | None = None) -> dict:
+    """n, complete, median and spread of RLV / price paid, absolute % errors, and the share of sales
+    whose price paid was at most land_cap % of the option's ARV."""
     r = df["ratio"].dropna()
     err = (r - 1).abs()
     q = lambda v, k: None if v.empty else float(v.quantile(k))
+    lp = df.loc[df["ratio"].notna(), "land_pct_of_arv"].dropna() if "land_pct_of_arv" in df else pd.Series(dtype=float)
     return {"n": int(len(r)), "complete": int(df.loc[df["ratio"].notna(), "complete"].sum()),
+            "land_rule_pct": None if land_cap is None or lp.empty else float((lp <= land_cap).mean() * 100),
             "median": q(r, 0.5), "p25": q(r, 0.25), "p75": q(r, 0.75),
             "median_abs_err_pct": None if err.empty else float(err.median() * 100),
             "mean_abs_err_pct": None if err.empty else float(err.mean() * 100)}
@@ -138,7 +147,7 @@ def miss_size(ratio: float) -> float:
 
 def townhome_residual(tc: dict | None, per_lot: float, econ: dict, tiers: list[float]) -> dict:
     """One townhome unit's residual before site work, from townhome comps: price - build - soft -
-    selling - profit - financing (loan land = the price paid per lot). Rough: no zoning cap, no
+    selling - profit - carry (or the loan model's financing, loan land = the price paid per lot). Rough: no zoning cap, no
     absorption, no site work."""
     if not tc or tc.get("median_price_per_sf") is None or pd.isna(tc.get("median_price_per_sf")):
         return {"residual": None, "note": "no townhome comps"}
@@ -156,7 +165,13 @@ def townhome_residual(tc: dict | None, per_lot: float, econ: dict, tiers: list[f
     if selling is None:
         blanks.append("selling_cost_pct")
     profit = price * costs["target_profit_pct"] / 100
-    fin = R.financing(build, soft, per_lot, econ.get("financing") or {}, blanks)
+    if "carry_cost_pct" in econ:       # the simple model: carry as a % of the sale price (rlv)
+        carry = None if econ["carry_cost_pct"] is None else price * econ["carry_cost_pct"] / 100
+        if carry is None:
+            blanks.append("carry_cost_pct")
+        fin = {"financing_cost": carry}
+    else:
+        fin = R.financing(build, soft, per_lot, econ.get("financing") or {}, blanks)
     residual = price - build - soft - (selling or 0) - profit - (fin["financing_cost"] or 0)
     return {"residual": residual, "unit_price": price, "unit_sf": sf, "price_per_sf": ppsf, "price_tier": tier,
             "comp_count": tc.get("comp_count"), "blank_inputs": ", ".join(blanks) or None}
@@ -172,19 +187,26 @@ def _r(x) -> str:
     return "-" if x is None or pd.isna(x) else f"{x:.2f}"
 
 
-def stats_table(groups: list[tuple[str, pd.DataFrame]]) -> list[str]:
-    out = ["| group | sales | complete | median RLV/paid | p25 | p75 | median abs error | mean abs error |",
-           "|---|---|---|---|---|---|---|---|"]
+def stats_table(groups: list[tuple[str, pd.DataFrame]], land_cap: float | None = None) -> list[str]:
+    land = f" land <= {land_cap:g}% of ARV |" if land_cap is not None else ""
+    out = [f"| group | sales | complete | median RLV/paid | p25 | p75 | median abs error | mean abs error |{land}",
+           "|---|---|---|---|---|---|---|---|" + ("---|" if land else "")]
     for name, d in groups:
-        s = stats(d)
+        s = stats(d, land_cap)
         out.append(f"| {name} | {s['n']} | {s['complete']} | {_r(s['median'])} | {_r(s['p25'])} | {_r(s['p75'])} | "
-                   f"{_pct(s['median_abs_err_pct'])} | {_pct(s['mean_abs_err_pct'])} |")
+                   f"{_pct(s['median_abs_err_pct'])} | {_pct(s['mean_abs_err_pct'])} |"
+                   + (f" {_pct(s['land_rule_pct'])} |" if land else ""))
     return out
 
 
-def tier_groups(df: pd.DataFrame, tiers: list[float]) -> list[tuple[str, pd.DataFrame]]:
+def tier_groups(df: pd.DataFrame, tiers: list[float], col: str = "price_tier") -> list[tuple[str, pd.DataFrame]]:
     labels = [R.price_tier(e, tiers) for e in tiers]
-    return [(f"comps {t} $/sf", df[df["price_tier"] == t]) for t in labels]
+    return [(f"comps {t} $/sf", df[df[col] == t]) for t in labels]
+
+
+def municipality_groups(df: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
+    """One group per municipality, the most sales first."""
+    return [(m, df[df["municipality"] == m]) for m in df["municipality"].value_counts().index]
 
 
 def implied_build_cost(r: pd.Series, soft_pct: float) -> float | None:
@@ -197,23 +219,26 @@ def implied_build_cost(r: pd.Series, soft_pct: float) -> float | None:
     return o["build_cost"] / sf + (r["rlv"] - r["price_paid"]) / (sf * (1 + soft_pct / 100))
 
 
-def calibration(valued: pd.DataFrame, econ: dict, tiers: list[float]) -> list[str]:
+def calibration(valued: pd.DataFrame, econ: dict, tiers: list[float], col: str = "price_tier") -> list[str]:
     """Hints for economics.yaml, never applied: the build cost that would make RLV = price paid, and
     price paid / the comps' home price (compare lot_to_home_ratio), by comp $/sf tier."""
     v = valued.assign(implied=[implied_build_cost(r, econ["costs"]["soft_cost_pct"]) for _, r in valued.iterrows()],
                       paid_to_home=valued["price_paid"] / valued["home_price"])
+    # the implied cost as a share of the home's sale price, beside build_cost_min_pct_of_sale (the floor)
+    v["implied_pct"] = v["implied"] * v["_option"].map(lambda o: o["size_sf"] * o["buildings"]) / v["arv"] * 100
     out = ["", "## Calibration hints (nothing is changed)", "",
            "Implied build cost = the $/sf at which the median sale's RLV equals the price paid, with every other "
            "input as configured (blank inputs still left out, so with financing filled in it would be lower). "
            "Paid / home = price paid / the comps' home price, the lot share builders actually paid.", "",
-           "| comps $/sf | sales | configured build $/sf | implied build $/sf (median) | p25 | p75 | paid / home |",
-           "|---|---|---|---|---|---|---|"]
-    for name, d in [("all", v)] + [(t, v[v["price_tier"] == t]) for t in (R.price_tier(e, tiers) for e in tiers)]:
+           "| comps $/sf | sales | configured build $/sf (incl. floor) | implied build $/sf (median) | p25 | p75 | "
+           "implied build % of sale | paid / home |",
+           "|---|---|---|---|---|---|---|---|"]
+    for name, d in [("all", v)] + [(t, v[v[col] == t]) for t in (R.price_tier(e, tiers) for e in tiers)]:
         if d.empty:
             continue
         rate = (d["_option"].map(lambda o: o["build_cost"] / (o["size_sf"] * o["buildings"]))).median()
         out.append(f"| {name} | {len(d)} | {rate:,.0f} | {d['implied'].median():,.0f} | {d['implied'].quantile(.25):,.0f} | "
-                   f"{d['implied'].quantile(.75):,.0f} | {d['paid_to_home'].median():.2f} |")
+                   f"{d['implied'].quantile(.75):,.0f} | {d['implied_pct'].median():,.0f}% | {d['paid_to_home'].median():.2f} |")
     out.append("")
     out.append(f"Configured lot_to_home_ratio: {econ['subdivision'].get('lot_to_home_ratio')}. Teardowns: median "
                f"ratio {_r(v.loc[v['teardown'], 'ratio'].median())} vs {_r(v.loc[~v['teardown'], 'ratio'].median())} "
@@ -221,8 +246,10 @@ def calibration(valued: pd.DataFrame, econ: dict, tiers: list[float]) -> list[st
     return out + [""]
 
 
-def report(df: pd.DataFrame, cfg: dict, econ: dict, as_of: date, start: date, counts: dict) -> str:
-    tiers = econ["comps"]["price_tiers_per_sf"]
+def report(df: pd.DataFrame, cfg: dict, econ: dict, as_of: date, start: date, counts: dict,
+           land_cap: float | None = None) -> str:
+    tiers = cfg.get("report_bands_per_sf") or econ["comps"]["price_tiers_per_sf"]
+    df = df.assign(band=[R.price_tier(x, tiers) for x in df["price_per_sf"]]) if len(df) else df
     valued = df[df["ratio"].notna()]
     blanks = valued["blank_inputs"].dropna().str.split(", ").explode().value_counts()
     lines = [f"# RLV backtest, {date.today()}", "",
@@ -238,17 +265,22 @@ def report(df: pd.DataFrame, cfg: dict, econ: dict, as_of: date, start: date, co
     if len(valued) and valued["complete"].sum() < len(valued):
         lines += [f"**{len(valued) - int(valued['complete'].sum())} of {len(valued)} RLVs are upper bounds** (blank "
                   "inputs left out): " + ", ".join(f"{k} {v}" for k, v in blanks.items()) + ".", ""]
-    lines += ["## RLV / price paid", ""]
+    lines += ["## RLV / price paid", "",
+              "RLV already takes out my target profit, so a well-calibrated model sits near 1.0." + (
+                  f" Last column: share of sales whose price paid was at most {land_cap:g}% of the option's ARV "
+                  "(my_buybox max_land_pct_of_arv)." if land_cap is not None else ""), ""]
     lines += stats_table([("all", valued)] + [(p, valued[valued["product"] == p]) for p in cfg["built_products"]]
-                         + tier_groups(valued, tiers))
+                         + tier_groups(valued, tiers, "band"), land_cap)
+    lines += ["", "By municipality:", ""]
+    lines += stats_table(municipality_groups(valued), land_cap)
     lines += ["", "Complete RLVs only:", ""]
     comp = valued[valued["complete"]]
     lines += stats_table([("all", comp)] + [(p, comp[comp["product"] == p]) for p in cfg["built_products"]]
-                         + tier_groups(comp, tiers))
+                         + tier_groups(comp, tiers, "band"), land_cap)
     lines += ["", "Best-use RLV / price paid (the best complete by-right option, often a split): median "
               f"{_r((valued['best_rlv'] / valued['price_paid']).median())}.", ""]
 
-    lines += calibration(valued, econ, tiers)
+    lines += calibration(valued, econ, tiers, "band")
     worst = valued.assign(miss=valued["ratio"].map(miss_size)).sort_values("miss", ascending=False).head(cfg["worst_n"])
     lines += [f"## {cfg['worst_n']} worst misses", "",
               "By |ln(RLV / paid)|. Each block is rlv.explain for the parcel valued at the sale; its \"best use\" "
@@ -256,7 +288,8 @@ def report(df: pd.DataFrame, cfg: dict, econ: dict, as_of: date, start: date, co
     for i, (_, r) in enumerate(worst.iterrows(), 1):
         lines += [f"### {i}. {r['pin']} {r['site_address'] or ''}: RLV {R._money(r['rlv'])} vs paid "
                   f"{R._money(r['price_paid'])} (ratio {_r(r['ratio'])})", "",
-                  f"Sold {r['sale_date']} ({r['validity']}); built {r['built']}; comps {r['price_tier']} $/sf.", "", "```"]
+                  f"Sold {r['sale_date']} ({r['validity']}); built {r['built']}; {r['municipality']}; comps "
+                  f"{r['band']} $/sf; ARV {R._money(r['arv'])}, paid = {_pct(r['land_pct_of_arv'])} of ARV.", "", "```"]
         lines += R.explain(pd.Series(r["_row"]), pd.Series(r["_option"]), econ)
         lines += ["```", ""]
     nm = df[df["ratio"].isna()]
@@ -355,7 +388,7 @@ def main() -> None:
     df, th, counts, as_of, start = run(engine, cfg, econ, scoring_cfg, load_rules(), ratios, land)
     out = ROOT / cfg["report_dir"]
     out.mkdir(exist_ok=True)
-    text_main = report(df, cfg, econ, as_of, start, counts)
+    text_main = report(df, cfg, econ, as_of, start, counts, T.load_config()[1].get("max_land_pct_of_arv"))
     (out / f"backtest_{date.today()}.md").write_text(text_main, encoding="utf-8")
     (out / f"backtest_townhomes_{date.today()}.md").write_text(townhome_report(th, econ, as_of, start), encoding="utf-8")
     print(text_main)

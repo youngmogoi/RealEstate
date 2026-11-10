@@ -10,10 +10,17 @@ max_price: 400000                  # parcel price (assessed x sales ratio until 
 min_score: 50000                   # best RLV - price
 max_sale_price_per_home: null      # the option's home (unit) sale price from comps; blank = no limit
 # Rules of thumb (decided 2026-11-09):
-min_resale_per_sf: 230             # the option's comps $/sf must be at least this
-max_land_pct_of_arv: 15            # price estimate <= this % of the option's ARV (its homes' sale value)
+# the option's comps $/sf must be at least this, by product (duplex_triplex = duplex, triplex,
+# quadraplex); one number applies to every product (decided 2026-11-09)
+min_resale_per_sf:
+  sfh: 255
+  duplex_triplex: 235
+max_land_pct_of_arv: 20            # price estimate <= this % of the option's ARV (its homes' sale value)
 # For the deal sheet: cash needed = (build + land) x (1 - loan_to_cost). Not used to choose. (draft)
 loan_to_cost: 0.75
 counties: [Mecklenburg]
 areas: [Charlotte]                 # county tax municipality, or [all]
-sewer_required: true               # parcels scored without public sewer don't fit
+sewer_required: true
+# Likely HOA (features/hoa.py, decided 2026-11-10): true = never Build; such parcels stay scored and
+# go to their own list (action likely_hoa, held_action = what they would be).
+exclude_likely_hoa: true               # parcels scored without public sewer don't fit

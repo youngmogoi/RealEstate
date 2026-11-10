@@ -37,17 +37,19 @@ STEPS = [
     ("2040 Policy Map place types (download)", "ingest.place_types"),
     ("utilities + city capital projects (download)", "ingest.utilities"),
     ("rail lines (download)", "ingest.rail"),
+    ("power lines (download)", "ingest.power_lines"),
     ("constraints (manual files + cached slope/soils)", "ingest.constraints"),
     ("NC OneMap check", "ingest.nconemap_check"),
     ("parcel features", "features.build"),
     ("buildable pieces (creek cuts, street access)", "features.pieces"),
+    ("likely HOA parcels", "features.hoa"),
     ("parcel yield", "scoring.yield"),
     ("comps, sales ratios, residual land value", "scoring.rlv"),
     ("deal routing (scores)", "scoring.route"),
     ("changes", "features.changes"),
 ]
 COUNT_TABLES = ["parcels", "parcel_owners", "parcel_sales", "parcel_cama", "comp_sales", "parcel_rlv", "scores", "parcel_zoning", "parcel_utilities", "parcel_constraints",
-                "streets", "parcel_features", "parcel_pieces", "changes"]
+                "streets", "parcel_features", "parcel_pieces", "parcel_hoa", "changes"]
 
 
 def run_step(module: str) -> tuple[int, str, float]:

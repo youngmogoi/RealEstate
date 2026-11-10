@@ -54,6 +54,13 @@ layers:
     class: unbuildable
     buffer_ft: 50                  # (draft) half a typical 100 ft main-line right-of-way (2026-11-09)
     exclude: {NET: ["A", "T"]}
+  power_lines:
+    # Electric power transmission lines (decided 2026-11-09): a public ArcGIS Online copy of the
+    # federal HIFLD layer (its maintainer is not confirmed; HIFLD Open itself has shut down).
+    # Generalized positions (2734 Monroe Rd's line is mapped 139 ft off), so info only: routing
+    # land_checks holds picks near a line for a look. `make power-lines` downloads dated files.
+    file: data/raw/constraints/PowerLines/power_lines_*.geojson
+    class: info
   streams:
     # lines: stream length inside the parcel, for evidence only
     file: data/raw/constraints/Creeks_Streams/Creeks_Streams.shp
@@ -97,3 +104,10 @@ rail_download:
   url: https://services.arcgis.com/xOi1kZaI0eWDREZv/arcgis/rest/services/NTAD_North_American_Rail_Network_Lines/FeatureServer/0
   fields: [FRAARCID, RROWNER1, NET, TRACKS, SUBDIV, YARDNAME, PASSNGR]
   download_dir: data/raw/constraints/Rail
+
+# `make power-lines` (ingest/power_lines.py): transmission lines in the county parcels' extent,
+# saved as <download_dir>/power_lines_<date>.geojson (WGS84). Older files are kept as history.
+power_lines_download:
+  url: https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/US_Electric_Power_Transmission_Lines/FeatureServer/0
+  fields: [OBJECTID_1, ID, TYPE, STATUS, OWNER, VOLTAGE, VOLT_CLASS, SOURCE, SOURCEDATE]
+  download_dir: data/raw/constraints/PowerLines

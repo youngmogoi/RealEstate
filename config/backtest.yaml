@@ -29,4 +29,6 @@ townhome:
                         "FAIR MARKET CONVEYANCE OF 2 OR MORE PARCELS", "BUILDER SALE OR OTHER MISC",
                         "SALE INCLUDED PARCELS TO BE ASSEMBLED FOR DEVEL.", "ACREAGE SPLIT INTO LOTS"]
 worst_n: 10
+# Comp $/sf bands the report groups by (2026-11-10; report only, not the economics' price tiers)
+report_bands_per_sf: [0, 230, 275, 350, 500]   # <230, 230-275, 275-350, 350-500, 500+
 report_dir: reports

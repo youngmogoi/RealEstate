@@ -51,8 +51,9 @@ from scoring.zoning_rules import load_rules
 
 Y = R.Y
 ROOT = Path(__file__).resolve().parent.parent
-ACTIONS = ["excluded", "build", "route", "build_fallback", "entitle", "crossing_candidate", "check_land", "skip"]
-# actions held for a land check when the assessor discounts the land (routing assessor_discount)
+ACTIONS = ["excluded", "build", "route", "build_fallback", "entitle", "crossing_candidate", "check_land", "likely_hoa",
+           "skip"]
+# actions held for a land check (routing land_checks / assessor_discount) or your verdict
 ACTIONABLE = ("build", "route", "build_fallback", "entitle", "crossing_candidate")
 TOWNHOME_OPTIONS = ("townhome", "if_crossed_townhome")
 
@@ -68,17 +69,34 @@ SCORES_COLS = {
     "verify_sewer": "bool", "no_frontage": "bool", "creek_divides": "bool", "apartments_possible": "bool",
     "rail_on_parcel": "bool", "rear_lot_with_house": "bool", "rear_lot_front_pin": "str",
     "land_psf": "float", "neighbor_land_psf": "float", "neighbor_count": "int", "land_value_ratio_pct": "float",
-    "assessor_discount": "bool", "held_action": "str",
+    "assessor_discount": "bool", "held_action": "str", "stream_length_ft": "float", "creek_on_lot": "bool",
+    "power_line_ft": "float", "power_line_near": "bool", "land_check": "str", "land_check_note": "str",
+    "likely_hoa": "bool", "hoa_basis": "str", "hoa_name": "str", "hoa_pin": "str", "plat_year": "int",
+    "pre_1980_subdivision": "bool",
     "reason": "str",
 }
 PARTNER_COLS = {"partner": "str", "unit_width_ft": "float"} | R.OPTION_COLS
 FLAGS = ["verify_sewer", "no_frontage", "creek_divides", "apartments_possible", "rail_on_parcel", "rear_lot_with_house",
-         "assessor_discount"]
+         "assessor_discount", "creek_on_lot", "power_line_near", "likely_hoa", "pre_1980_subdivision"]
 
 
 def load_config() -> tuple[dict, dict]:
     read = lambda name: yaml.safe_load((ROOT / "config" / name).read_text(encoding="utf-8"))
     return read("partners.yaml"), read("my_buybox.yaml")
+
+
+def load_verdicts(path: Path | None = None) -> dict[str, dict]:
+    """Your manual land checks (config/land_checks.yaml): {pin: {verdict ok|no, note, checked}}."""
+    path = path or ROOT / "config" / "land_checks.yaml"
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else None
+    out = {str(pin): v for pin, v in (raw or {}).items()}
+    for v in out.values():             # YAML reads a bare no as false
+        if v and v.get("verdict") is False:
+            v["verdict"] = "no"
+    bad = [pin for pin, v in out.items() if (v or {}).get("verdict") not in ("ok", "no")]
+    if bad:
+        raise SystemExit(f"{path.name}: verdict must be ok or no for {', '.join(bad)}")
+    return out
 
 
 def product(option: str) -> str:
@@ -137,6 +155,16 @@ def partner_misses(partner: dict, p: dict, o: dict) -> list[str]:
     return out
 
 
+def resale_floor(box: dict, option: str) -> float | None:
+    """My minimum comps $/sf for an option: one number, or by product (plexes share duplex_triplex,
+    as in build_cost_per_sf)."""
+    floor = box.get("min_resale_per_sf")
+    if not isinstance(floor, dict):
+        return floor
+    fam = product(option)
+    return floor.get(fam, floor.get("duplex_triplex") if fam in ("duplex", "triplex", "quadraplex") else None)
+
+
 def my_misses(box: dict, p: dict, o: dict, county: str) -> list[str]:
     """Why an option is outside my buy box (empty = Build)."""
     out = place_misses(box, p, county)
@@ -144,7 +172,7 @@ def my_misses(box: dict, p: dict, o: dict, county: str) -> list[str]:
         out.insert(0, f"{product(o['option'])} not in my products")
     if box.get("max_units_per_parcel") is not None and o["units"] > box["max_units_per_parcel"]:
         out.append(f"{o['units']} units > {box['max_units_per_parcel']}")
-    floor = box.get("min_resale_per_sf")
+    floor = resale_floor(box, o["option"])
     if floor is not None and (o.get("price_per_sf") is None or o["price_per_sf"] < floor):
         out.append(f"comps {_money(o.get('price_per_sf'))}/sf < {_money(floor)}/sf")
     land_cap = box.get("max_land_pct_of_arv")
@@ -206,7 +234,9 @@ def route_parcel(p: dict, options: list[dict], partner_rows: dict[str, list[dict
         "acres": p["acres"], "price": p.get("price"), "exclusion_category": p.get("exclusion_category"),
         "redevelopment_watch": bool(p.get("redevelopment_watch")), "upper_bound_option": p.get("upper_bound_option"),
         "upper_bound_rlv": p.get("upper_bound_rlv"), "blank_inputs": p.get("blank_inputs"),
-        "place_type": p.get("place_type"), "rear_lot_front_pin": p.get("rear_lot_front_pin")}         | {f: bool(p.get(f)) for f in FLAGS}
+        "place_type": p.get("place_type"), "rear_lot_front_pin": p.get("rear_lot_front_pin"),
+        "hoa_basis": p.get("hoa_basis"), "hoa_name": p.get("hoa_name"), "hoa_pin": p.get("hoa_pin"),
+        "plat_year": p.get("plat_year")} | {f: bool(p.get(f)) for f in FLAGS}
 
     def done(action: str, o: dict | None, reason: str, **extra) -> dict:
         if o:
@@ -306,28 +336,63 @@ def route_parcel(p: dict, options: list[dict], partner_rows: dict[str, list[dict
     return done("skip", None, "skip: " + reason)
 
 
-def assessor_hold(row: dict, land: dict | None, cfg: dict) -> dict:
-    """Hold an actionable row for a land check when its assessed land $/sf is under min_ratio_pct of
-    nearby single-family lots' median. `land`: {land_psf, neighbor_land_psf, neighbor_count}."""
-    if row["action"] not in ACTIONABLE or not land:
+def hoa_hold(row: dict, box: dict) -> dict:
+    """my_buybox exclude_likely_hoa (decided 2026-11-10): a likely-HOA parcel is never Build (or
+    build_fallback); it stays scored and goes to its own list, action likely_hoa."""
+    if not box.get("exclude_likely_hoa") or not row.get("likely_hoa") or row["action"] not in ("build", "build_fallback"):
         return row
-    row = row | land
-    own, nbr, n = land.get("land_psf"), land.get("neighbor_land_psf"), land.get("neighbor_count") or 0
-    if own is None or not nbr or n < cfg["min_neighbors"]:
-        return row
-    pct = own / nbr * 100
-    row["land_value_ratio_pct"] = pct
-    if pct >= cfg["min_ratio_pct"]:
-        return row
-    return row | {"assessor_discount": True, "held_action": row["action"], "action": "check_land",
-                  "reason": f"check land: assessed land ${own:,.2f}/sf is {pct:.0f}% of the ${nbr:,.2f}/sf median of "
-                            f"{n} single-family lots within {cfg['radius_ft']:,} ft (< {cfg['min_ratio_pct']}%); "
+    return row | {"held_action": row["action"], "action": "likely_hoa",
+                  "reason": f"likely HOA: {row.get('hoa_basis')} ({row.get('hoa_name')}, PIN {row.get('hoa_pin')}); "
                             f"would be {row['reason']}"}
 
 
+def land_hold(row: dict, land: dict | None, routing: dict, verdict: dict | None = None) -> dict:
+    """Your verdict, then the land checks, on one scores row (decided 2026-11-09). An actionable row
+    goes to check_land when the assessor discounts its land (assessor_discount), a mapped creek
+    crosses a lot under land_checks.creek_max_acres, or a power line is mapped within power_line_ft.
+    Your verdict "ok" lets the action stand; "no" skips it with your note (an exclusion still wins).
+    `land`: {land_psf, neighbor_land_psf, neighbor_count, stream_length_ft, power_line_ft}."""
+    if verdict:
+        row = row | {"land_check": verdict["verdict"], "land_check_note": verdict.get("note")}
+    if row["action"] not in ACTIONABLE or not (land or verdict):
+        return row
+    row = row | (land or {})
+    ad, lc = routing.get("assessor_discount") or {}, routing.get("land_checks") or {}
+    why = []
+    own, nbr, n = row.get("land_psf"), row.get("neighbor_land_psf"), row.get("neighbor_count") or 0
+    if ad and own is not None and nbr and n >= ad["min_neighbors"]:
+        row["land_value_ratio_pct"] = pct = own / nbr * 100
+        if pct < ad["min_ratio_pct"]:
+            row["assessor_discount"] = True
+            why.append(f"assessed land ${own:,.2f}/sf is {pct:.0f}% of the ${nbr:,.2f}/sf median of {n} single-family "
+                       f"lots within {ad['radius_ft']:,} ft (< {ad['min_ratio_pct']}%)")
+    if lc.get("creek_max_acres") is not None and (row.get("stream_length_ft") or 0) > 0 \
+            and row["acres"] < lc["creek_max_acres"]:
+        row["creek_on_lot"] = True
+        why.append(f"a mapped creek crosses the lot ({row['stream_length_ft']:,.0f} ft; lot under "
+                   f"{lc['creek_max_acres']:g} ac)")
+    if lc.get("power_line_ft") is not None and row.get("power_line_ft") is not None \
+            and row["power_line_ft"] <= lc["power_line_ft"]:
+        row["power_line_near"] = True
+        why.append(f"a transmission line is mapped {row['power_line_ft']:,.0f} ft away (<= {lc['power_line_ft']:,} ft)")
+    if verdict and verdict["verdict"] == "no":
+        return row | {"held_action": row["action"], "action": "skip",
+                      "reason": f"skip: your land check {verdict.get('checked')}: {verdict.get('note')}; "
+                                f"would be {row['reason']}"}
+    if not why or (verdict and verdict["verdict"] == "ok"):
+        return row
+    return row | {"held_action": row["action"], "action": "check_land",
+                  "reason": f"check land: {'; '.join(why)}; would be {row['reason']}"}
+
+
+LAND_KEYS = ("land_psf", "neighbor_land_psf", "neighbor_count", "stream_length_ft", "power_line_ft")
 LAND_SQL = """
-SELECT p.pin, f.land_value / NULLIF(ST_Area(p.geom), 0) AS land_psf, nb.med AS neighbor_land_psf, nb.n AS neighbor_count
+SELECT p.pin, f.land_value / NULLIF(ST_Area(p.geom), 0) AS land_psf, nb.med AS neighbor_land_psf, nb.n AS neighbor_count,
+       c.stream_length_ft,
+       (SELECT min(ST_Distance(cf.geom, p.geom)) FROM {s}.constraint_features cf
+        WHERE cf.layer = 'power_lines' AND ST_DWithin(cf.geom, p.geom, :power_ft)) AS power_line_ft
 FROM {s}.parcels p JOIN {s}.parcel_features f USING (pin)
+LEFT JOIN {s}.parcel_constraints c USING (pin)
 LEFT JOIN LATERAL (
     SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY nf.land_value / ST_Area(n.geom)) AS med, count(*) AS n
     FROM {s}.parcels n JOIN {s}.parcel_features nf ON nf.pin = n.pin
@@ -345,6 +410,7 @@ RLV_COLS = ["pin", "site_address", "municipality", "area_sf", "scored_on", "pric
 YIELD_COLS = ["pin", "jurisdiction", "base_district", "net_sf", "if_crossed_net_sf", "lot_width_ft", "townhome_units",
               "townhome_needs_rezoning", "townhome_target_district", "if_crossed_townhome_units", "no_frontage",
               "creek_divides", "apartments_possible", "place_type"]
+HOA_COLS = ["pin", "likely_hoa", "hoa_basis", "hoa_name", "hoa_pin", "plat_year", "pre_1980_subdivision"]
 OPT_COLS = ["pin", "option", "sewer", "kind", "product", "units", "rlv", "unit_price", "blank_inputs",
             "price_per_sf", "revenue", "build_cost"]
 
@@ -358,13 +424,15 @@ def townhome_candidates(p: dict, partners: list[dict], county: str) -> list[dict
 
 def run_route(engine: Engine, partners_cfg: dict, box: dict, econ: dict, scoring_cfg: dict, rules: dict,
               ratios: pd.DataFrame, land: pd.DataFrame | None, run_date: date, s: str = "public",
-              chunk: int = 10_000) -> tuple[pd.DataFrame, dict]:
-    """Route every parcel in parcel_rlv; store scores and scores_partner_options. Returns (scores, changes)."""
+              chunk: int = 10_000, verdicts: dict[str, dict] | None = None) -> tuple[pd.DataFrame, dict]:
+    """Route every parcel in parcel_rlv; store scores and scores_partner_options. Returns (scores, changes).
+    `verdicts`: your manual land checks (load_verdicts)."""
     partners, routing = partners_cfg["partners"], partners_cfg["routing"]
     county = routing["parcel_county"]
     with engine.connect() as conn:
         pins = [r[0] for r in conn.execute(text(f"SELECT pin FROM {s}.parcel_rlv ORDER BY pin"))]
         bands = {r["lot_band"]: r for r in R._records(pd.read_sql(text(f"SELECT * FROM {s}.comp_lot_bands"), conn))}
+        has_hoa = conn.execute(text(f"SELECT to_regclass('{s}.parcel_hoa') IS NOT NULL")).scalar_one()
     ranges = [(pins[i], pins[min(i + chunk, len(pins)) - 1]) for i in range(0, len(pins), chunk)] or [("", "")]
     input_sql = R.INPUT_SQL.replace("y.pin BETWEEN :lo AND :hi", "y.pin = ANY(:pins)")
     with engine.begin() as conn:
@@ -377,7 +445,10 @@ def run_route(engine: Engine, partners_cfg: dict, box: dict, econ: dict, scoring
             opts: dict[str, list[dict]] = {}
             for o in read(f"SELECT {', '.join(OPT_COLS)} FROM {s}.parcel_rlv_options WHERE pin BETWEEN :lo AND :hi"):
                 opts.setdefault(o["pin"], []).append(o)
-            parcels = [r | ys.get(r["pin"], {}) | {"acres": r["area_sf"] / R.SQFT_PER_ACRE} for r in rlv]
+            hoa = {r["pin"]: r for r in read(f"SELECT {', '.join(HOA_COLS)} FROM {s}.parcel_hoa "
+                                             "WHERE pin BETWEEN :lo AND :hi")} if has_hoa else {}
+            parcels = [r | ys.get(r["pin"], {}) | hoa.get(r["pin"], {}) | {"acres": r["area_sf"] / R.SQFT_PER_ACRE}
+                       for r in rlv]
 
             # townhome partners: recompute at their widths, for parcels inside their limits
             wanted = {p["pin"]: townhome_candidates(p, partners, county) for p in parcels}
@@ -394,13 +465,15 @@ def run_route(engine: Engine, partners_cfg: dict, box: dict, econ: dict, scoring
                                                               scoring_cfg, ratios, land, pt) for pt in pts}
             rows = [route_parcel(p, [o for o in opts.get(p["pin"], []) if o["sewer"] == p["scored_on"]],
                                  prows.get(p["pin"], {}), partners, box, routing) for p in parcels]
-            ad = routing.get("assessor_discount")
+            rows = [hoa_hold(r, box) for r in rows]
+            # land checks only for parcels that would be acted on (a few thousand spatial lookups)
+            ad, lc = routing.get("assessor_discount") or {}, routing.get("land_checks") or {}
             act = [r["pin"] for r in rows if r["action"] in ACTIONABLE]
-            if ad and act:
-                lands = {r["pin"]: {k: r[k] for k in ("land_psf", "neighbor_land_psf", "neighbor_count")}
-                         for r in R._records(pd.read_sql(text(LAND_SQL.format(s=s)), conn, params={
-                             "pins": act, "radius": ad["radius_ft"], "uses": list(ad["neighbor_land_uses"])}))}
-                rows = [assessor_hold(r, lands.get(r["pin"]), ad) for r in rows]
+            lands = {r["pin"]: {k: r[k] for k in LAND_KEYS} for r in R._records(pd.read_sql(
+                text(LAND_SQL.format(s=s)), conn, params={
+                    "pins": act, "radius": ad.get("radius_ft", 0), "uses": list(ad.get("neighbor_land_uses", [])),
+                    "power_ft": lc.get("power_line_ft") or 0}))} if act else {}
+            rows = [land_hold(r, lands.get(r["pin"]), routing, (verdicts or {}).get(r["pin"])) for r in rows]
             extra = [o for d in prows.values() for rs in d.values() for o in rs]
             R._store(conn, R._frame(rows, SCORES_COLS), f"{s}.scores", ["pin"], run_date, append=i > 0, finish=False)
             R._store(conn, R._frame(extra, PARTNER_COLS), f"{s}.scores_partner_options",
@@ -449,7 +522,8 @@ def main() -> None:
     if not has_rlv:
         print("No parcel_rlv yet: run `make rlv` (needs the core costs in config/economics.yaml).")
         return
-    df, changes = run_route(engine, partners_cfg, box, econ, scoring_cfg, load_rules(), ratios, land, date.today())
+    df, changes = run_route(engine, partners_cfg, box, econ, scoring_cfg, load_rules(), ratios, land, date.today(),
+                            verdicts=load_verdicts())
     print(summary(df, changes))
     print("\n".join(examples(df)))
 

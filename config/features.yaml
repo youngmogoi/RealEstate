@@ -49,6 +49,15 @@ owner_type_rules:
   - type: government
     words: ["CITY OF", "TOWN OF", "COUNTY", "STATE OF", "UNITED STATES", "USA", "NC DEPT", "DEPARTMENT OF",
             "BOARD OF EDUCATION", "AUTHORITY", "COMMISSION", "NCDOT"]
+  - type: hoa
+    # Homeowner and community associations (decided 2026-11-10). Before church_nonprofit, whose
+    # ASSOCIATION / ASSN would catch them. Not "...ASSOCIATES" (companies) or civic associations.
+    words: ["HOMEOWNERS", "HOME OWNERS", "HOMEOWNER`S", "HOMEOWNERS`", "HOMEOWNRS", "HOA", "OWNERS ASSOCIATION",
+            "OWNERS ASSOC", "OWNERS ASSN", "OWNER`S ASSOCIATION", "OWNERS` ASSOCIATION", "P/O ASSOC",
+            "COMMUNITY ASSOCIATION", "COMMUNITY ASSOC", "COMMUNITY ASSN", "PROPERTY OWNERS", "MASTER ASSOCIATION",
+            "MASTER ASSOC", "MASTER HOMEOWNER`S", "TOWNHOME ASSOCIATION", "TOWNHOMES ASSOCIATION", "TOWNHOME ASSOC",
+            "MAINTENANCE ASSOCIATION", "RESIDENTIAL ASSOCIATION", "RESIDENTIAL ASSOC", "NEIGHBORHOOD ASSOCIATION",
+            "NEIGHBORHOOD ASSOC", "VILLAS ASSOCIATION", "RESIDENTS ASSOCIATION"]
   - type: church_nonprofit
     words: ["CHURCH", "MINISTRIES", "MINISTRY", "TEMPLE", "MOSQUE", "SYNAGOGUE", "CONGREGATION", "DIOCESE",
             "BAPTIST", "METHODIST", "METH", "PRESBYTERIAN", "EPISCOPAL", "EPISC", "CATHOLIC", "LUTHERAN",
@@ -91,3 +100,16 @@ weekly:
   disk_warn_free_gb: 5           # below this: warning at the top of the log + Windows notification
   disk_stop_free_gb: 2.5         # below this: skip the run (a run can grow the image by a few GB)
   docker_disk_image: '%LOCALAPPDATA%\Docker\wsl\disk\docker_data.vhdx'
+
+hoa:
+  # HOA detection (features/hoa.py, `make hoa`, decided 2026-11-10) -> parcel_hoa. HOA land = owner
+  # type hoa, or one of these land uses (shell patterns). Every parcel on the same recorded plat
+  # (legal description M<book>-<page>) as HOA land is likely_hoa; so is one touching HOA land with
+  # the same NC OneMap subdivision name (the assessor's neighborhood, too broad to group by alone:
+  # it would flag 62% of parcels, e.g. 937 E Woodlawn Rd with Sedgefield Park's HOA).
+  common_land_uses: ["*COMMON*", "COS NO AV10"]
+  ignore_subdivision_names: ["*SUBMARKET*"]     # assessor market buckets, not neighborhoods
+  touch_ft: 1
+  # plat_year = the year the first home on the plat was built (NC OneMap year built; no recording
+  # dates in the county files), the same as the sewer proxy's
+  pre_subdivision_year: 1980

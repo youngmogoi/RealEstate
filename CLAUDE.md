@@ -73,8 +73,8 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   code stays (a missing switch or key = the detailed model) and tests/test_rlv.py ECON still checks it;
   SIMPLE there checks the simple one. build_cost_per_sf_by_tier removed from config (code ignores it).
 - Rules of thumb (decided 2026-11-09): build_cost_per_sf is all-in (hard + soft), so soft_cost_pct = 0.
-  Build also needs the option's comps >= my_buybox min_resale_per_sf (230) and price <= max_land_pct_of_arv
-  (15%) of its ARV (= the option's homes' sale value). scores stores arv, land_pct_of_arv, build_cost and
+  Build also needs the option's comps >= my_buybox min_resale_per_sf (by product: sfh 255,
+  duplex_triplex 235) and price <= max_land_pct_of_arv (20%) of its ARV (= the option's homes' sale value). scores stores arv, land_pct_of_arv, build_cost and
   cash_needed = (build + land) x (1 - my_buybox loan_to_cost) for the deal sheet.
 - Buildability (decided 2026-11-09, after your review of the top 10: 6 landlocked, 1 rail): a house on
   the lot as is (cur_*) needs frontage >= economics buildability.min_frontage_ft (20, draft) or access
@@ -94,6 +94,19 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   single-family lots within 500 ft (5+) becomes `check_land` (held_action keeps what it would be;
   land_psf, neighbor_land_psf, land_value_ratio_pct in scores): the assessor usually knows of a basin,
   easement or creek (21304330 Alexander Dowd Dr, a stormwater basin, was 2%).
+- Land checks (decided 2026-11-09, third review): check_land also when a mapped creek crosses a lot
+  under routing land_checks.creek_max_acres (2) or a transmission line is mapped within power_line_ft
+  (150; `make power-lines`, ingest/power_lines.py: a public ArcGIS Online copy of HIFLD, maintainer not
+  confirmed, positions off by 100+ ft, so constraints class info, never deducted). Your verdicts live
+  in config/land_checks.yaml ("ok" keeps the action, "no" skips with your note; quote them, YAML reads
+  bare no as false); record every manual check there. `make export` writes exports/scores_<date>.csv.
+- Likely HOA (decided 2026-11-10, `make hoa`, features/hoa.py -> parcel_hoa): owner type `hoa`
+  (HOMEOWNERS, COMMUNITY/OWNERS/MASTER/RESIDENTIAL/NEIGHBORHOOD ASSOC..., before church_nonprofit) is
+  excluded as hoa_common_area. HOA land = owner type hoa or a common land use; likely_hoa = HOA land,
+  same recorded plat (legal description M<book>-<page>), or touching HOA land with the same NC OneMap
+  subdivision name. That name is the assessor's neighborhood (grouping by it alone flagged 62% of
+  parcels), so it only counts with touching. plat_year = first home built on the plat;
+  pre_1980_subdivision. my_buybox exclude_likely_hoa: Build/build_fallback -> action likely_hoa.
 - Zoning rules (Phase 2.1, decided 2026-10-28; config/zoning_rules.yaml, check with
   `make zoning-rules`, ordinances via `make udo` into data/raw/udo/ with manifest.csv):
   townhome = UDO "Multi-Family Attached Unit". Yield is stored per housing type (sfh, duplex,

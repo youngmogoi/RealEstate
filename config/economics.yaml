@@ -197,6 +197,7 @@ score:
     government: government
     church_nonprofit: church_nonprofit
     private_school: school               # owner type from features.yaml owner_type_rules (2026-11-09)
+    hoa_common_area: hoa                 # HOA-owned land (owner type hoa, 2026-11-10)
   exclude_access_via_common_area: true       # HOA land reached only through common area
   # Shapes with no county tax account (no owner, no land use; decided 2026-10-28): lake and river
   # shapes (PINs ...W01, ...M01), and S, X, R, A, L lettered shapes; 184 with by-right yield.
@@ -250,7 +251,7 @@ score:
   institutional_guard:
     residential_land_uses: ["SINGLE FAMILY*", "TOWN HOUSE*", "TOWNHOUSE*", "RURAL HOMESITE", "USE VALUE HOMESITE",
                             "MOBILE HOME*", "RESIDENTIAL*", "MULTI FAMILY DUPLEX/TRIPLEX"]
-    institution_owner_types: [church_nonprofit, government, school]
+    institution_owner_types: [church_nonprofit, government, school, hoa]
     institution_owner_words: ["CHURCH", "IGLESIA", "MINISTERIO", "PRAYER", "ASSEMBLY", "FELLOWSHIP", "WORSHIP",
                               "GOSPEL", "BIBLE", "CHAPEL", "TABERNACLE", "APOSTOLIC", "ISLAMIC", "MASJID",
                               "JEHOVAHS", "BAHA`IS", "SIKH", "HINDU", "BUDDHIST", "FRIENDS MEETING", "CLUB",

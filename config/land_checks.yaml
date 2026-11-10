@@ -1,0 +1,33 @@
+# Your manual land checks (decided 2026-11-09): one entry per PIN you looked at on a map.
+#   verdict ok: the pick stands even when a land-check flag fires (creek, power line, assessor discount)
+#   verdict no: the parcel is skipped with your note as the reason (an exclusion still wins)
+# Routing (scoring/route.py) reads this every run; checked parcels leave the check_land list.
+# Add new checks at the bottom: "pin": {verdict: "ok" or "no", note: "...", checked: YYYY-MM-DD}
+
+# First review of the top 10 (2026-11-09)
+"18310105": {verdict: "no", note: "landlocked (rear lot of 2500 Cloister Dr)", checked: 2026-11-09}
+"17511148": {verdict: "no", note: "landlocked (rear lot of 3925 Selwyn Av)", checked: 2026-11-09}
+"21309211": {verdict: "ok", note: "seems good (Old Bell Rd)", checked: 2026-11-09}
+"17309126": {verdict: "ok", note: "seems good (Park South Dr)", checked: 2026-11-09}
+"12524379": {verdict: "no", note: "landlocked (rear lot of 912 Henley Pl)", checked: 2026-11-09}
+"15102115": {verdict: "no", note: "landlocked (rear lot of 2100 Lombardy Cr)", checked: 2026-11-09}
+"15713425": {verdict: "ok", note: "seems good (Queen Charlotte's Ct); excluded anyway as COS NO AV10", checked: 2026-11-09}
+"14916341": {verdict: "ok", note: "seems good (937 E Woodlawn Rd)", checked: 2026-11-09}
+"12705514": {verdict: "no", note: "train tracks on property (Pecan Av)", checked: 2026-11-09}
+"12524380": {verdict: "no", note: "landlocked (rear lot of 926 Henley Pl)", checked: 2026-11-09}
+
+# Second review (2026-11-09)
+"20911276": {verdict: "no", note: "creek cuts right through (Mountainbrook Rd)", checked: 2026-11-09}
+"21304330": {verdict: "no", note: "stormwater basin (Alexander Dowd Dr)", checked: 2026-11-09}
+"12709601": {verdict: "no", note: "on the railway pathway (429 Bascom St)", checked: 2026-11-09}
+"18704121": {verdict: "no", note: "essentially landlocked, owned by a school (Glen Oaks Rd)", checked: 2026-11-09}
+"18727106": {verdict: "ok", note: "seems good (1030 River Oaks Ln)", checked: 2026-11-09}
+"21160101": {verdict: "no", note: "creek runs down the lot, established neighborhood (4724 Morrowick Rd)", checked: 2026-11-09}
+"17910108": {verdict: "ok", note: "seems good (6212 Sharon Rd)", checked: 2026-11-09}
+
+# Third review (2026-11-09)
+"18902213": {verdict: "no", note: "creek runs through (5817 Donegal Dr)", checked: 2026-11-09}
+"13102323": {verdict: "ok", note: "seems good (1701 Norland Rd)", checked: 2026-11-09}
+"21310648": {verdict: "ok", note: "seems good (201 London Cr)", checked: 2026-11-09}
+"21310647": {verdict: "ok", note: "seems good (7923 Ritter Dr)", checked: 2026-11-09}
+"15701406": {verdict: "no", note: "utility lines go through (2734 Monroe Rd)", checked: 2026-11-09}

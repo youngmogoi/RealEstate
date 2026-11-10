@@ -65,3 +65,27 @@ def test_implied_build_cost_02708315():
             "bldg_type": "SINGLE FAMILY RESIDENTIAL", "built_heated_sf": 3100, "year_built": 2025}
     r = B.value_sale(parcel("02708315"), sale, COMPS, RULES, ECON, CFG, RATIOS, None, "sfh", ["cur_sfh"])
     assert B.implied_build_cost(pd.Series(r), 10) == pytest.approx(150 - 118536.03 / 3300, abs=0.01)
+
+
+def test_sale_row_has_municipality_arv_and_land_share_02708315():
+    # ARV = cur_sfh's home sale value 3,000 sf x $250 = 750,000; paid 300,000 = 40% of ARV
+    sale = {"pin": "02708315", "sale_price": 300000, "sale_date": "2025-03-01", "validity_desc": None,
+            "bldg_type": "SINGLE FAMILY RESIDENTIAL", "built_heated_sf": 3100, "year_built": 2025}
+    r = B.value_sale(parcel("02708315"), sale, COMPS, RULES, ECON, CFG, RATIOS, None, "sfh", ["cur_sfh"])
+    assert (r["municipality"], r["arv"], r["land_pct_of_arv"]) == ("CHARLOTTE", 750000, 40.0)
+
+
+def test_land_rule_share_and_report_bands():
+    df = pd.DataFrame({"ratio": [0.8, 1.0, 1.2, None], "complete": True, "land_pct_of_arv": [10.0, 20.0, 25.0, 5.0]})
+    # the sale without a ratio doesn't count; 2 of 3 at most 20%
+    assert B.stats(df, 20)["land_rule_pct"] == pytest.approx(200 / 3)
+    assert B.stats(df)["land_rule_pct"] is None
+    bands = B.load_config()["report_bands_per_sf"]
+    assert [B.R.price_tier(x, bands) for x in (229, 230, 275, 349, 500, 900)] == [
+        "<230", "230-275", "275-350", "275-350", "500+", "500+"]
+
+
+def test_townhome_residual_uses_carry_in_the_simple_model():
+    # 506,000 - 330,000 - 33,000 - 75,900 - carry 3.5% x 506,000 (17,710) = 49,390
+    econ = ECON | {"carry_cost_pct": 3.5}
+    assert B.townhome_residual(COMPS["townhome"], 50000, econ, TIERS)["residual"] == pytest.approx(49390)

@@ -206,6 +206,16 @@ def test_rules_of_thumb_02708315():
     # comps must sell for at least min_resale_per_sf
     s = route("02708315", box=box | {"max_land_pct_of_arv": 60, "min_resale_per_sf": 260})
     assert s["action"] == "skip" and "comps $250/sf < $260/sf" in s["reason"]
+    # by product: the sfh minimum applies to cur_sfh, the duplex_triplex one doesn't
+    by_product = box | {"max_land_pct_of_arv": 60}
+    s = route("02708315", box=by_product | {"min_resale_per_sf": {"sfh": 255, "duplex_triplex": 235}})
+    assert s["action"] == "skip" and "comps $250/sf < $255/sf" in s["reason"]
+    s = route("02708315", box=by_product | {"min_resale_per_sf": {"sfh": 245, "duplex_triplex": 300}})
+    assert s["action"] == "build"
+    floors = {"min_resale_per_sf": {"sfh": 255, "duplex_triplex": 235}}
+    assert [T.resale_floor(floors, o) for o in ("cur_sfh", "split_duplex", "cur_triplex", "split_quadraplex",
+                                                "townhome")] == [255, 235, 235, 235, None]
+    assert T.resale_floor({"min_resale_per_sf": 230}, "townhome") == 230
 
 
 def test_deal_sheet_numbers_02708315():
@@ -217,23 +227,78 @@ def test_deal_sheet_numbers_02708315():
 
 
 AD = {"radius_ft": 500, "neighbor_land_uses": ["SINGLE FAMILY%"], "min_neighbors": 5, "min_ratio_pct": 20}
+LC = {"assessor_discount": AD, "land_checks": {"creek_max_acres": 2, "power_line_ft": 150}}
+# land facts with nothing to hold: 75% of the neighbors (6212 Sharon Rd), no creek, no line near
+CLEAN = {"land_psf": 14.54, "neighbor_land_psf": 19.31, "neighbor_count": 56, "stream_length_ft": 0,
+         "power_line_ft": None}
+
+
+def build_row():
+    """02708315's Build row (0.28 ac), the way route_parcel returns it."""
+    return route("02708315", box=BOX | {"min_score": None})
 
 
 def test_assessor_discount_holds_build_for_a_land_check():
     # Your 2026-11-09 review: 21304330 Alexander Dowd Dr (a stormwater basin) is assessed at $0.32/sf
     # against a $16.06/sf median of 64 single-family lots within 500 ft (2%); 17910108 6212 Sharon Rd
     # (good) at $14.54 against $19.31 (75%). Shown on 02708315's Build row.
-    s = route("02708315", box=BOX | {"min_score": None})
-    held = T.assessor_hold(s, {"land_psf": 0.32, "neighbor_land_psf": 16.06, "neighbor_count": 64}, AD)
+    s = build_row()
+    held = T.land_hold(s, CLEAN | {"land_psf": 0.32, "neighbor_land_psf": 16.06, "neighbor_count": 64}, LC)
     assert (held["action"], held["held_action"], held["assessor_discount"]) == ("check_land", "build", True)
     assert held["land_value_ratio_pct"] == pytest.approx(1.99, abs=0.01)
     assert held["reason"].startswith("check land: assessed land $0.32/sf is 2% of the $16.06/sf median of 64 "
                                      "single-family lots within 500 ft (< 20%); would be build: cur_sfh")
-    ok = T.assessor_hold(s, {"land_psf": 14.54, "neighbor_land_psf": 19.31, "neighbor_count": 56}, AD)
+    ok = T.land_hold(s, CLEAN, LC)
     assert (ok["action"], ok["assessor_discount"]) == ("build", False)
     assert ok["land_value_ratio_pct"] == pytest.approx(75.30, abs=0.01)
     # too few neighbors to judge, or not actionable: unchanged
-    few = T.assessor_hold(s, {"land_psf": 0.32, "neighbor_land_psf": 16.06, "neighbor_count": 4}, AD)
+    few = T.land_hold(s, CLEAN | {"land_psf": 0.32, "neighbor_land_psf": 16.06, "neighbor_count": 4}, LC)
     assert few["action"] == "build" and few["land_value_ratio_pct"] is None
     skip = route("02708315")
-    assert T.assessor_hold(skip, {"land_psf": 0.32, "neighbor_land_psf": 16.06, "neighbor_count": 64}, AD) == skip
+    assert T.land_hold(skip, CLEAN | {"land_psf": 0.32, "neighbor_land_psf": 16.06, "neighbor_count": 64}, LC) == skip
+
+
+def test_creek_on_a_small_lot_holds_build():
+    # 18902213 Donegal Dr (0.56 ac): 126 ft of mapped creek, "creek runs through" (you, 2026-11-09)
+    s = build_row()
+    held = T.land_hold(s, CLEAN | {"stream_length_ft": 126}, LC)
+    assert (held["action"], held["creek_on_lot"]) == ("check_land", True)
+    assert held["reason"].startswith("check land: a mapped creek crosses the lot (126 ft; lot under 2 ac); would be build")
+    # a tract of 2 ac or more is left to the buffers, pieces and creek_divides
+    big = T.land_hold(s | {"acres": 2.0}, CLEAN | {"stream_length_ft": 126}, LC)
+    assert (big["action"], big["creek_on_lot"]) == ("build", False)
+
+
+def test_power_line_near_holds_build():
+    # 15701406 2734 Monroe Rd: "utilities go through here"; the mapped 100-161 kV line is 139 ft away
+    s = build_row()
+    held = T.land_hold(s, CLEAN | {"power_line_ft": 139}, LC)
+    assert (held["action"], held["power_line_near"]) == ("check_land", True)
+    assert "a transmission line is mapped 139 ft away (<= 150 ft)" in held["reason"]
+    assert T.land_hold(s, CLEAN | {"power_line_ft": 151}, LC)["action"] == "build"
+    # every reason is listed
+    both = T.land_hold(s, CLEAN | {"power_line_ft": 139, "stream_length_ft": 126}, LC)
+    assert both["reason"].startswith("check land: a mapped creek crosses the lot (126 ft; lot under 2 ac); "
+                                     "a transmission line is mapped 139 ft away")
+
+
+def test_your_verdicts_override_the_checks():
+    s = build_row()
+    # 14916341 937 E Woodlawn Rd has 182 ft of mapped creek, but you called it good
+    ok = T.land_hold(s, CLEAN | {"stream_length_ft": 182}, LC,
+                     {"verdict": "ok", "note": "seems good (937 E Woodlawn Rd)", "checked": "2026-11-09"})
+    assert (ok["action"], ok["creek_on_lot"], ok["land_check"]) == ("build", True, "ok")
+    no = T.land_hold(s, CLEAN, LC, {"verdict": "no", "note": "creek runs through (5817 Donegal Dr)",
+                                    "checked": "2026-11-09"})
+    assert (no["action"], no["held_action"], no["land_check"]) == ("skip", "build", "no")
+    assert no["reason"].startswith("skip: your land check 2026-11-09: creek runs through (5817 Donegal Dr); would be build")
+    # an excluded parcel stays excluded, with your verdict recorded beside it
+    ex = route("02918135")
+    kept = T.land_hold(ex, None, LC, {"verdict": "no", "note": "x", "checked": "2026-11-09"})
+    assert (kept["action"], kept["land_check"]) == ("excluded", "no")
+
+
+def test_land_checks_file_is_valid():
+    v = T.load_verdicts()
+    assert v["18902213"]["verdict"] == "no" and v["14916341"]["verdict"] == "ok"
+    assert len(v) == 22 and all(len(pin) == 8 for pin in v)

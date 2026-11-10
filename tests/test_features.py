@@ -40,7 +40,7 @@ D1, D2 = date(2026, 10, 26), date(2026, 11, 2)
     ("ADAMS METROPOLITAN AFRICAN METH EPISC CH TR", "church_nonprofit"),  # church trustees
     ("CHRISTOPHER P HOWARD TRUST", "trust"),
     ("RUTH B GOINES REVOCABLE TRUST", "trust"),
-    ("AUTEN WOODS PROPERTY OWNERS ASSOCIATION INC", "church_nonprofit"),
+    ("AUTEN WOODS PROPERTY OWNERS ASSOCIATION INC", "hoa"),
     ("PINE GROVE RESIDENTIAL FUNDING I LLC", "llc_corporate"),
     ("MCH SFR NC OWNER 1 LP", "llc_corporate"),
     ("DUKE POWER CO", "llc_corporate"),
