@@ -214,3 +214,26 @@ def test_deal_sheet_numbers_02708315():
     assert (s["arv"], s["build_cost"], s["price_per_sf"]) == (750000, 450000, 250)
     assert s["land_pct_of_arv"] == pytest.approx(393840 / 750000 * 100)
     assert s["cash_needed"] == pytest.approx(210960)
+
+
+AD = {"radius_ft": 500, "neighbor_land_uses": ["SINGLE FAMILY%"], "min_neighbors": 5, "min_ratio_pct": 20}
+
+
+def test_assessor_discount_holds_build_for_a_land_check():
+    # Your 2026-11-09 review: 21304330 Alexander Dowd Dr (a stormwater basin) is assessed at $0.32/sf
+    # against a $16.06/sf median of 64 single-family lots within 500 ft (2%); 17910108 6212 Sharon Rd
+    # (good) at $14.54 against $19.31 (75%). Shown on 02708315's Build row.
+    s = route("02708315", box=BOX | {"min_score": None})
+    held = T.assessor_hold(s, {"land_psf": 0.32, "neighbor_land_psf": 16.06, "neighbor_count": 64}, AD)
+    assert (held["action"], held["held_action"], held["assessor_discount"]) == ("check_land", "build", True)
+    assert held["land_value_ratio_pct"] == pytest.approx(1.99, abs=0.01)
+    assert held["reason"].startswith("check land: assessed land $0.32/sf is 2% of the $16.06/sf median of 64 "
+                                     "single-family lots within 500 ft (< 20%); would be build: cur_sfh")
+    ok = T.assessor_hold(s, {"land_psf": 14.54, "neighbor_land_psf": 19.31, "neighbor_count": 56}, AD)
+    assert (ok["action"], ok["assessor_discount"]) == ("build", False)
+    assert ok["land_value_ratio_pct"] == pytest.approx(75.30, abs=0.01)
+    # too few neighbors to judge, or not actionable: unchanged
+    few = T.assessor_hold(s, {"land_psf": 0.32, "neighbor_land_psf": 16.06, "neighbor_count": 4}, AD)
+    assert few["action"] == "build" and few["land_value_ratio_pct"] is None
+    skip = route("02708315")
+    assert T.assessor_hold(skip, {"land_psf": 0.32, "neighbor_land_psf": 16.06, "neighbor_count": 64}, AD) == skip

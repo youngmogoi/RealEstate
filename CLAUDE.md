@@ -78,15 +78,22 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   cash_needed = (build + land) x (1 - my_buybox loan_to_cost) for the deal sheet.
 - Buildability (decided 2026-11-09, after your review of the top 10: 6 landlocked, 1 rail): a house on
   the lot as is (cur_*) needs frontage >= economics buildability.min_frontage_ft (20, draft) or access
-  via common area, and net_sf >= the house footprint (size / floors); else no value, reason in notes.
+  via common area, and footprint (size / floors) <= max_footprint_pct_of_buildable (40, draft) of
+  net_sf; else no value, reason in notes.
   Landlocked rear lots keep rear_lot_front_pin (same owner's touching street parcel, one with a house
   first) and rear_lot_with_house. Excluded land uses added: COS NO AV10 (Common Open Space, no active
   tax) and REC AREA (hoa_common_area); state, airport, other county/federal (government); floodway
   no-build, 100-year floodplain acreage, wasteland/slivers, private RR ROW, submerged, roadway corridor,
   buffer strip, unsuitable for septic, greenway trail (unbuildable). Rail: `make rail` (ingest/rail.py)
   saves NTAD rail lines as data/raw/constraints/Rail/rail_lines_<date>.geojson; the constraints `rail`
-  layer buffers the newest by buffer_ft (25, draft) into unbuildable land (rail_acres, rail_on_parcel;
+  layer buffers the newest by buffer_ft (50, draft) into unbuildable land (rail_acres, rail_on_parcel;
   it also cuts pieces). The city map server has no rail layer.
+- Second review (2026-11-09): owner type `school` (SCHOOL, ACADEMY, COLLEGE, UNIVERSITY, SEMINARY, after
+  the entity suffixes) is excluded as private_school. Assessor discount (partners.yaml routing): a
+  parcel that would be Build/Route/candidate but whose land $/sf is < 20% of the median of
+  single-family lots within 500 ft (5+) becomes `check_land` (held_action keeps what it would be;
+  land_psf, neighbor_land_psf, land_value_ratio_pct in scores): the assessor usually knows of a basin,
+  easement or creek (21304330 Alexander Dowd Dr, a stormwater basin, was 2%).
 - Zoning rules (Phase 2.1, decided 2026-10-28; config/zoning_rules.yaml, check with
   `make zoning-rules`, ordinances via `make udo` into data/raw/udo/ with manifest.csv):
   townhome = UDO "Multi-Family Attached Unit". Yield is stored per housing type (sfh, duplex,

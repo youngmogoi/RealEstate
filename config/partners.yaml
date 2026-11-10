@@ -42,3 +42,13 @@ routing:
   # district so far, so the others yield no rezoning option until their districts get rules.
   entitle_place_types: [Neighborhood 2, Neighborhood Center, Community Activity Center,
                         Regional Activity Center, Innovation Mixed-Use]
+  # Assessor discount (decided 2026-11-09): a parcel that would be Build, Route or a candidate but
+  # whose assessed land $/sf is under min_ratio_pct of the median of nearby single-family lots
+  # (within radius_ft, land value > 0, at least min_neighbors of them) goes to check_land instead:
+  # the assessor usually knows of a basin, easement, creek or sliver. Your 2026-11-09 review: 4 of 5
+  # bad picks were at 2-18%, the 5 good ones at 24-75%.
+  assessor_discount:
+    radius_ft: 500
+    neighbor_land_uses: ["SINGLE FAMILY%"]   # SQL LIKE patterns on parcel_features.land_use
+    min_neighbors: 5
+    min_ratio_pct: 20                        # (draft)

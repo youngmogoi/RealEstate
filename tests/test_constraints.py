@@ -174,5 +174,6 @@ def test_rail_lines_become_unbuildable_corridors(tmp_path, monkeypatch):
     assert (g.iloc[0]["layer"], g.iloc[0]["class"]) == ("rail", "unbuildable")
     length = gpd.GeoSeries([shapely.LineString([(-80.8152, 35.2140), (-80.8146, 35.2148)])], crs=4326) \
         .to_crs(2264).length.iloc[0]
-    # 25 ft each side plus round ends: length x 50 + pi x 25^2
-    assert g.geometry.area.iloc[0] == pytest.approx(length * 50 + np.pi * 625, rel=0.01)
+    # buffer_ft (50) each side plus round ends: length x 100 + pi x 50^2
+    assert spec["buffer_ft"] == 50
+    assert g.geometry.area.iloc[0] == pytest.approx(length * 100 + np.pi * 2500, rel=0.01)

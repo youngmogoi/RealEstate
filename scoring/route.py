@@ -51,7 +51,9 @@ from scoring.zoning_rules import load_rules
 
 Y = R.Y
 ROOT = Path(__file__).resolve().parent.parent
-ACTIONS = ["excluded", "build", "route", "build_fallback", "entitle", "crossing_candidate", "skip"]
+ACTIONS = ["excluded", "build", "route", "build_fallback", "entitle", "crossing_candidate", "check_land", "skip"]
+# actions held for a land check when the assessor discounts the land (routing assessor_discount)
+ACTIONABLE = ("build", "route", "build_fallback", "entitle", "crossing_candidate")
 TOWNHOME_OPTIONS = ("townhome", "if_crossed_townhome")
 
 SCORES_COLS = {
@@ -65,10 +67,13 @@ SCORES_COLS = {
     "exclusion_category": "str", "redevelopment_watch": "bool",
     "verify_sewer": "bool", "no_frontage": "bool", "creek_divides": "bool", "apartments_possible": "bool",
     "rail_on_parcel": "bool", "rear_lot_with_house": "bool", "rear_lot_front_pin": "str",
+    "land_psf": "float", "neighbor_land_psf": "float", "neighbor_count": "int", "land_value_ratio_pct": "float",
+    "assessor_discount": "bool", "held_action": "str",
     "reason": "str",
 }
 PARTNER_COLS = {"partner": "str", "unit_width_ft": "float"} | R.OPTION_COLS
-FLAGS = ["verify_sewer", "no_frontage", "creek_divides", "apartments_possible", "rail_on_parcel", "rear_lot_with_house"]
+FLAGS = ["verify_sewer", "no_frontage", "creek_divides", "apartments_possible", "rail_on_parcel", "rear_lot_with_house",
+         "assessor_discount"]
 
 
 def load_config() -> tuple[dict, dict]:
@@ -301,6 +306,37 @@ def route_parcel(p: dict, options: list[dict], partner_rows: dict[str, list[dict
     return done("skip", None, "skip: " + reason)
 
 
+def assessor_hold(row: dict, land: dict | None, cfg: dict) -> dict:
+    """Hold an actionable row for a land check when its assessed land $/sf is under min_ratio_pct of
+    nearby single-family lots' median. `land`: {land_psf, neighbor_land_psf, neighbor_count}."""
+    if row["action"] not in ACTIONABLE or not land:
+        return row
+    row = row | land
+    own, nbr, n = land.get("land_psf"), land.get("neighbor_land_psf"), land.get("neighbor_count") or 0
+    if own is None or not nbr or n < cfg["min_neighbors"]:
+        return row
+    pct = own / nbr * 100
+    row["land_value_ratio_pct"] = pct
+    if pct >= cfg["min_ratio_pct"]:
+        return row
+    return row | {"assessor_discount": True, "held_action": row["action"], "action": "check_land",
+                  "reason": f"check land: assessed land ${own:,.2f}/sf is {pct:.0f}% of the ${nbr:,.2f}/sf median of "
+                            f"{n} single-family lots within {cfg['radius_ft']:,} ft (< {cfg['min_ratio_pct']}%); "
+                            f"would be {row['reason']}"}
+
+
+LAND_SQL = """
+SELECT p.pin, f.land_value / NULLIF(ST_Area(p.geom), 0) AS land_psf, nb.med AS neighbor_land_psf, nb.n AS neighbor_count
+FROM {s}.parcels p JOIN {s}.parcel_features f USING (pin)
+LEFT JOIN LATERAL (
+    SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY nf.land_value / ST_Area(n.geom)) AS med, count(*) AS n
+    FROM {s}.parcels n JOIN {s}.parcel_features nf ON nf.pin = n.pin
+    WHERE n.pin <> p.pin AND ST_DWithin(n.geom, p.geom, :radius) AND nf.land_value > 0
+      AND nf.land_use LIKE ANY(:uses) AND ST_Area(n.geom) > 0) nb ON true
+WHERE p.pin = ANY(:pins)
+"""
+
+
 # ---------------------------------------------------------------- run over every parcel
 
 RLV_COLS = ["pin", "site_address", "municipality", "area_sf", "scored_on", "price", "score", "exclusion_category",
@@ -358,6 +394,13 @@ def run_route(engine: Engine, partners_cfg: dict, box: dict, econ: dict, scoring
                                                               scoring_cfg, ratios, land, pt) for pt in pts}
             rows = [route_parcel(p, [o for o in opts.get(p["pin"], []) if o["sewer"] == p["scored_on"]],
                                  prows.get(p["pin"], {}), partners, box, routing) for p in parcels]
+            ad = routing.get("assessor_discount")
+            act = [r["pin"] for r in rows if r["action"] in ACTIONABLE]
+            if ad and act:
+                lands = {r["pin"]: {k: r[k] for k in ("land_psf", "neighbor_land_psf", "neighbor_count")}
+                         for r in R._records(pd.read_sql(text(LAND_SQL.format(s=s)), conn, params={
+                             "pins": act, "radius": ad["radius_ft"], "uses": list(ad["neighbor_land_uses"])}))}
+                rows = [assessor_hold(r, lands.get(r["pin"]), ad) for r in rows]
             extra = [o for d in prows.values() for rs in d.values() for o in rs]
             R._store(conn, R._frame(rows, SCORES_COLS), f"{s}.scores", ["pin"], run_date, append=i > 0, finish=False)
             R._store(conn, R._frame(extra, PARTNER_COLS), f"{s}.scores_partner_options",

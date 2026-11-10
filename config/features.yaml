@@ -53,6 +53,10 @@ owner_type_rules:
     words: ["CHURCH", "MINISTRIES", "MINISTRY", "TEMPLE", "MOSQUE", "SYNAGOGUE", "CONGREGATION", "DIOCESE",
             "BAPTIST", "METHODIST", "METH", "PRESBYTERIAN", "EPISCOPAL", "EPISC", "CATHOLIC", "LUTHERAN",
             "FOUNDATION", "ASSOCIATION", "ASSN", "SOCIETY", "LODGE", "CHARITY", "HABITAT"]
+  - type: school
+    # Private schools and colleges (decided 2026-11-09; e.g. PROVIDENCE DAY SCHOOL INC). After the
+    # entity suffixes, so "OLD SCHOOL HOMES LLC" stays a company.
+    words: ["SCHOOL", "ACADEMY", "COLLEGE", "UNIVERSITY", "SEMINARY"]
   - type: estate_heirs
     # The county rarely records estate status in names (~230 parcels labeled, 2026-10-27); most
     # inherited property stays under the decedent's plain name. Also checks the second owner

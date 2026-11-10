@@ -594,16 +594,17 @@ def footprint(o: dict) -> tuple[float | None, float | None, float | None]:
 
 def lot_as_is_blocked(p: dict, econ: dict, size_sf: float, stories: int) -> str | None:
     """Why no house can go on the lot as it is (economics `buildability`, decided 2026-11-09), else
-    None: it needs min_frontage_ft of street frontage (or access through a common area) and
-    buildable land of at least the house's footprint (size / floors)."""
+    None: it needs min_frontage_ft of street frontage (or access through a common area) and room on
+    its buildable land: the house's footprint (size / floors) at most max_footprint_pct_of_buildable."""
     b = econ.get("buildability") or {}
     frontage, need = p.get("frontage_ft") or 0, b.get("min_frontage_ft")
     if need is not None and frontage < need and not p.get("access_via_common_area"):
         return ("no street frontage (landlocked)" if frontage <= 0
                 else f"frontage {frontage:,.0f} ft < {need:,.0f} ft: no street access for a house")
-    footprint_sf, net_sf = size_sf / max(stories, 1), p.get("net_sf") or 0
-    if b.get("house_must_fit_buildable") and net_sf < footprint_sf:
-        return f"buildable land {net_sf:,.0f} sf < the house's footprint {footprint_sf:,.0f} sf"
+    footprint_sf, net_sf, pct = size_sf / max(stories, 1), p.get("net_sf") or 0, b.get("max_footprint_pct_of_buildable")
+    if pct is not None and footprint_sf > net_sf * pct / 100:
+        return (f"the house's footprint {footprint_sf:,.0f} sf > {pct:g}% of the buildable land "
+                f"{net_sf:,.0f} sf")
     return None
 
 

@@ -177,10 +177,12 @@ land_price:
 buildability:
   # A house on the lot as it is (cur_* options; decided 2026-11-09) needs street access and room:
   # frontage of at least min_frontage_ft (0 = landlocked; access through a common area also counts),
-  # and buildable land (net_sf, outside creek buffers, floodways and rail) at least the house's
-  # footprint (size / floors). Otherwise the option gets no value and the reason is in its notes.
+  # and buildable land (net_sf, outside creek buffers, floodways and rail) with room around the
+  # house: its footprint (size / floors) at most this % of it (yard, setbacks, driveway; 2026-11-09,
+  # 20911276 Mountainbrook Rd: a 2,158 sf footprint on 2,744 sf left by a creek buffer). Blank = no
+  # check. Otherwise the option gets no value and the reason is in its notes.
   min_frontage_ft: 20            # (draft) check Charlotte's minimum for a flag-lot driveway
-  house_must_fit_buildable: true
+  max_footprint_pct_of_buildable: 40   # (draft)
 
 rollback_tax:
   # Developing present-use land ends the deferral and the deferred taxes come due (G.S. 105-277.4(c)).
@@ -194,6 +196,7 @@ score:
   exclude_owner_types:
     government: government
     church_nonprofit: church_nonprofit
+    private_school: school               # owner type from features.yaml owner_type_rules (2026-11-09)
   exclude_access_via_common_area: true       # HOA land reached only through common area
   # Shapes with no county tax account (no owner, no land use; decided 2026-10-28): lake and river
   # shapes (PINs ...W01, ...M01), and S, X, R, A, L lettered shapes; 184 with by-right yield.
@@ -247,7 +250,7 @@ score:
   institutional_guard:
     residential_land_uses: ["SINGLE FAMILY*", "TOWN HOUSE*", "TOWNHOUSE*", "RURAL HOMESITE", "USE VALUE HOMESITE",
                             "MOBILE HOME*", "RESIDENTIAL*", "MULTI FAMILY DUPLEX/TRIPLEX"]
-    institution_owner_types: [church_nonprofit, government]
+    institution_owner_types: [church_nonprofit, government, school]
     institution_owner_words: ["CHURCH", "IGLESIA", "MINISTERIO", "PRAYER", "ASSEMBLY", "FELLOWSHIP", "WORSHIP",
                               "GOSPEL", "BIBLE", "CHAPEL", "TABERNACLE", "APOSTOLIC", "ISLAMIC", "MASJID",
                               "JEHOVAHS", "BAHA`IS", "SIKH", "HINDU", "BUDDHIST", "FRIENDS MEETING", "CLUB",

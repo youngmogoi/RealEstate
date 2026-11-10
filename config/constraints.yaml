@@ -52,7 +52,7 @@ layers:
     # S siding, X out of service (track still there), A abandoned and T trail (dropped).
     file: data/raw/constraints/Rail/rail_lines_*.geojson
     class: unbuildable
-    buffer_ft: 25                  # (draft) track + clearance each side of the centerline
+    buffer_ft: 50                  # (draft) half a typical 100 ft main-line right-of-way (2026-11-09)
     exclude: {NET: ["A", "T"]}
   streams:
     # lines: stream length inside the parcel, for evidence only

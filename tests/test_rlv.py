@@ -586,13 +586,15 @@ def test_access_through_common_area_counts():
     assert o[("cur_sfh", "public")]["rlv"] == pytest.approx(162023.97, abs=0.01)
 
 
-def test_house_footprint_must_fit_buildable_land():
-    _, o = run("02708315", net_sf=999)
-    assert o[("cur_sfh", "public")]["notes"] == "buildable land 999 sf < the house's footprint 1,000 sf"
-    _, o = run("02708315", net_sf=1000)
+def test_house_needs_room_on_buildable_land():
+    # footprint 1,000 sf may fill at most 40% (max_footprint_pct_of_buildable) -> 2,500 sf needed.
+    # 20911276 Mountainbrook Rd (2026-11-09): a 2,158 sf footprint on the 2,744 sf a creek buffer left.
+    _, o = run("02708315", net_sf=2499)
+    assert o[("cur_sfh", "public")]["notes"] == "the house's footprint 1,000 sf > 40% of the buildable land 2,499 sf"
+    _, o = run("02708315", net_sf=2500)
     assert o[("cur_sfh", "public")]["rlv"] == pytest.approx(162023.97, abs=0.01)
     econ = copy.deepcopy(ECON)
-    econ["buildability"]["house_must_fit_buildable"] = False
+    econ["buildability"]["max_footprint_pct_of_buildable"] = None
     _, o = run("02708315", econ, net_sf=999)
     assert o[("cur_sfh", "public")]["rlv"] == pytest.approx(162023.97, abs=0.01)
 
@@ -612,6 +614,17 @@ def test_unbuildable_and_public_land_uses_are_excluded(land_use, category):
     row, _ = run("02708315", land_use=land_use)
     assert row["exclusion_category"] == category
     assert (row["score"] is None) == (category is not None)
+
+
+def test_school_owners_are_excluded():
+    # 18704121 Glen Oaks Rd, owned by PROVIDENCE DAY SCHOOL INC, was a Build pick (2026-11-09)
+    import yaml
+    from features.build import owner_type
+    rules = yaml.safe_load((R.ROOT / "config" / "features.yaml").read_text())["owner_type_rules"]
+    assert owner_type("PROVIDENCE DAY SCHOOL INC", rules) == "school"
+    assert owner_type("OLD SCHOOL HOMES LLC", rules) == "llc_corporate"
+    row, _ = run("02708315", owner_type="school")
+    assert (row["exclusion_category"], row["score"]) == ("private_school", None)
 
 
 def test_rear_lot_and_rail_flags_are_kept():
