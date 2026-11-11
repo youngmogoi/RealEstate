@@ -99,7 +99,10 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   (150; `make power-lines`, ingest/power_lines.py: a public ArcGIS Online copy of HIFLD, maintainer not
   confirmed, positions off by 100+ ft, so constraints class info, never deducted). Your verdicts live
   in config/land_checks.yaml ("ok" keeps the action, "no" skips with your note; quote them, YAML reads
-  bare no as false); record every manual check there. `make export` writes exports/scores_<date>.csv.
+  bare no as false); record every manual check there. Review loop (2026-11-10): `make export` writes
+  exports/scores_<date>.xlsx (one sheet per action; my_verdict / my_note first, prefilled; PIN as text;
+  Polaris /pid/<pin> and satellite links); type ok / no, `make import-checks` merges them into
+  land_checks.yaml, `make route` applies them.
 - Likely HOA (decided 2026-11-10, `make hoa`, features/hoa.py -> parcel_hoa): owner type `hoa`
   (HOMEOWNERS, COMMUNITY/OWNERS/MASTER/RESIDENTIAL/NEIGHBORHOOD ASSOC..., before church_nonprofit) is
   excluded as hoa_common_area. HOA land = owner type hoa or a common land use; likely_hoa = HOA land,

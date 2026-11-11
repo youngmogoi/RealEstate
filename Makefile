@@ -1,4 +1,4 @@
-.PHONY: up down test ingest cama addresses ingest-nconemap zoning utilities constraints streets place-types features pieces changes weekly refresh-manual udo zoning-rules yield rlv route backtest score digest rail export power-lines hoa
+.PHONY: up down test ingest cama addresses ingest-nconemap zoning utilities constraints streets place-types features pieces changes weekly refresh-manual udo zoning-rules yield rlv route backtest score digest rail export power-lines hoa import-checks
 
 .env:
 	cp .env.example .env
@@ -85,6 +85,9 @@ score: route
 
 export:
 	uv run python -m ops.export
+
+import-checks:
+	uv run python -m ops.import_checks
 
 digest:
 	@echo "digest: not implemented yet" && exit 1
