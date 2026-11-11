@@ -106,7 +106,12 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   same recorded plat (legal description M<book>-<page>), or touching HOA land with the same NC OneMap
   subdivision name. That name is the assessor's neighborhood (grouping by it alone flagged 62% of
   parcels), so it only counts with touching. plat_year = first home built on the plat;
-  pre_1980_subdivision. my_buybox exclude_likely_hoa: Build/build_fallback -> action likely_hoa.
+  pre_1980_subdivision. my_buybox exclude_likely_hoa: Build/negotiate/build_fallback -> action likely_hoa.
+- Negotiate tier (decided 2026-11-10): Build stays at max_land_pct_of_arv 20. A parcel that passes every
+  other Build test with land above 20% and at most negotiate_max_land_pct_of_arv (25) of ARV gets action
+  negotiate, target_offer = 20% of ARV, and profit_pct_at_price / profit_pct_at_offer = (option profit +
+  RLV - land) / ARV. Build cost stays sfh 140 / duplex_triplex 130 until you give your real numbers
+  (the 2026-11-10 backtest implied $107-125/sf below $350/sf comps).
 - Zoning rules (Phase 2.1, decided 2026-10-28; config/zoning_rules.yaml, check with
   `make zoning-rules`, ordinances via `make udo` into data/raw/udo/ with manifest.csv):
   townhome = UDO "Multi-Family Attached Unit". Yield is stored per housing type (sfh, duplex,
@@ -206,6 +211,9 @@ per parcel (Build / Route to partner / Entitle candidate / Skip).
   inside scoring, never on deal sheets, maps, or anything shared.
 - Charlotte Water capital projects are in the city CIP "View of Polygons" layer (MapServer/23),
   not the lines layer, which holds only street and bike projects.
+- TODO (2026-11-10 backtest): house size by lot size. The model builds the comps' median house on every
+  lot, so large and lake lots get too small a house (Litaker Manor: 2,660 sf modeled, 6,087 built; Moxie
+  Glen lake lots 0.26-0.34). Size should scale with the lot (and a waterfront premium). Not now.
 - TODO: building permits as their own ingest (Mecklenburg Code Enforcement / Charlotte permit data,
   downloaded by hand). The backtest (2026-10-28) uses a proxy until then: sold as vacant, and CAMA now
   shows a building built in or after the sale year (misses houses under construction). Permits are

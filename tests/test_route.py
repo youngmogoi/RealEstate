@@ -13,7 +13,8 @@ PARTNERS_CFG, BOX_CFG = T.load_config()
 BOX = BOX_CFG | {"products": ["sfh", "duplex", "triplex"], "max_units_per_parcel": 4, "acres_min": 0.1,
                  "acres_max": 3, "max_price": 400000, "min_score": 50000, "max_sale_price_per_home": None,
                  "counties": ["Mecklenburg"], "areas": ["Charlotte"], "sewer_required": True,
-                 "min_resale_per_sf": None, "max_land_pct_of_arv": None, "loan_to_cost": 0.75}
+                 "min_resale_per_sf": None, "max_land_pct_of_arv": None, "loan_to_cost": 0.75,
+                 "negotiate_max_land_pct_of_arv": None, "exclude_likely_hoa": True}
 # Fixed here so the tests don't move when partners.yaml is edited (the test partner as first seeded)
 TEST_PARTNER = {"name": "TEST PARTNER - not real", "products": ["townhome"], "counties": ["Mecklenburg"],
                 "areas": ["all"], "acres_min": 3, "acres_max": 15, "density_min": 6, "density_max": 12,
@@ -302,3 +303,34 @@ def test_land_checks_file_is_valid():
     v = T.load_verdicts()
     assert v["18902213"]["verdict"] == "no" and v["14916341"]["verdict"] == "ok"
     assert len(v) == 22 and all(len(pin) == 8 for pin in v)
+
+
+def test_negotiate_tier_02708315():
+    # cur_sfh: ARV 750,000, price 393,840 = 52.5% of ARV, RLV 162,023.97, target profit 15% = 112,500.
+    # Shown with max land 50% and a negotiate cap of 55% (your config: 20 and 25).
+    box = BOX | {"min_score": None, "max_land_pct_of_arv": 50, "negotiate_max_land_pct_of_arv": 55}
+    s = route("02708315", box=box)
+    assert (s["action"], s["option"]) == ("negotiate", "cur_sfh")
+    # offer 50% x 750,000 = 375,000
+    assert s["target_offer"] == pytest.approx(375000)
+    # profit at a price = (112,500 + 162,023.97 - price) / 750,000:
+    # at 393,840 -> -119,316.03 = -15.91%; at 375,000 -> -100,476.03 = -13.40%
+    assert s["profit_pct_at_price"] == pytest.approx(-15.9088, abs=0.0001)
+    assert s["profit_pct_at_offer"] == pytest.approx(-13.3968, abs=0.0001)
+    assert "land 52.5% of ARV $750,000 (> 50%); offer $375,000 (50%)" in s["reason"]
+    # above the negotiate cap: skip; inside my max: build (with its profit at the price)
+    assert route("02708315", box=box | {"negotiate_max_land_pct_of_arv": 52})["action"] == "skip"
+    b = route("02708315", box=box | {"max_land_pct_of_arv": 60})
+    assert b["action"] == "build" and b["profit_pct_at_price"] == pytest.approx(-15.9088, abs=0.0001)
+    # another miss besides land (score below my minimum): no negotiate
+    assert route("02708315", box=box | {"min_score": 50000})["action"] == "skip"
+    # a likely-HOA negotiate goes to the HOA list
+    held = T.hoa_hold(s | {"likely_hoa": True}, box)
+    assert (held["action"], held["held_action"]) == ("likely_hoa", "negotiate")
+
+
+def test_profit_pct():
+    o = {"profit": 112500, "rlv": 162023.97, "revenue": 750000}
+    assert T.profit_pct(o, 274523.97) == pytest.approx(0)          # paying the whole RLV + profit
+    assert T.profit_pct(o, 162023.97) == pytest.approx(15)         # paying exactly the RLV: my target
+    assert T.profit_pct(o, None) is None and T.profit_pct(o | {"profit": None}, 1) is None

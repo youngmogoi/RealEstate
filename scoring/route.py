@@ -51,10 +51,10 @@ from scoring.zoning_rules import load_rules
 
 Y = R.Y
 ROOT = Path(__file__).resolve().parent.parent
-ACTIONS = ["excluded", "build", "route", "build_fallback", "entitle", "crossing_candidate", "check_land", "likely_hoa",
-           "skip"]
+ACTIONS = ["excluded", "build", "negotiate", "route", "build_fallback", "entitle", "crossing_candidate", "check_land",
+           "likely_hoa", "skip"]
 # actions held for a land check (routing land_checks / assessor_discount) or your verdict
-ACTIONABLE = ("build", "route", "build_fallback", "entitle", "crossing_candidate")
+ACTIONABLE = ("build", "negotiate", "route", "build_fallback", "entitle", "crossing_candidate")
 TOWNHOME_OPTIONS = ("townhome", "if_crossed_townhome")
 
 SCORES_COLS = {
@@ -71,6 +71,7 @@ SCORES_COLS = {
     "land_psf": "float", "neighbor_land_psf": "float", "neighbor_count": "int", "land_value_ratio_pct": "float",
     "assessor_discount": "bool", "held_action": "str", "stream_length_ft": "float", "creek_on_lot": "bool",
     "power_line_ft": "float", "power_line_near": "bool", "land_check": "str", "land_check_note": "str",
+    "target_offer": "float", "profit_pct_at_price": "float", "profit_pct_at_offer": "float",
     "likely_hoa": "bool", "hoa_basis": "str", "hoa_name": "str", "hoa_pin": "str", "plat_year": "int",
     "pre_1980_subdivision": "bool",
     "reason": "str",
@@ -155,6 +156,10 @@ def partner_misses(partner: dict, p: dict, o: dict) -> list[str]:
     return out
 
 
+def _pct1(x: float | None) -> str:
+    return "-" if x is None else f"{x:.1f}%"
+
+
 def resale_floor(box: dict, option: str) -> float | None:
     """My minimum comps $/sf for an option: one number, or by product (plexes share duplex_triplex,
     as in build_cost_per_sf)."""
@@ -190,6 +195,14 @@ def my_misses(box: dict, p: dict, o: dict, county: str) -> list[str]:
         if box.get("min_score") is not None and o["rlv"] - p["price"] < box["min_score"]:
             out.append(f"score {_money(o['rlv'] - p['price'])} < {_money(box['min_score'])}")
     return out
+
+
+def profit_pct(o: dict, price: float | None) -> float | None:
+    """My profit as a % of ARV if the land costs `price`: the option's built-in target profit plus
+    whatever its RLV leaves above the price (house model: RLV = ARV - costs - target profit)."""
+    if price is None or o.get("profit") is None or not o.get("revenue") or o.get("rlv") is None:
+        return None
+    return (o["profit"] + o["rlv"] - price) / o["revenue"] * 100
 
 
 def uplift_ok(value: float, base: float | None, routing: dict) -> bool:
@@ -280,11 +293,23 @@ def route_parcel(p: dict, options: list[dict], partner_rows: dict[str, list[dict
     # 1. Build: my product is the best use and fits my buy box
     if fam in box["products"]:
         misses = my_misses(box, p, b, county)
+        arv = b.get("revenue")
         if not misses:
-            arv = b.get("revenue")
             return done("build", b, f"build: {fmt(b)}, price {_money(p.get('price'))}, "
                                     f"score {_money(b['rlv'] - p['price'])}; comps {_money(b.get('price_per_sf'))}/sf, "
-                                    f"ARV {_money(arv)}, land {p['price'] / arv * 100:.1f}% of ARV")
+                                    f"ARV {_money(arv)}, land {p['price'] / arv * 100:.1f}% of ARV",
+                        profit_pct_at_price=profit_pct(b, p.get("price")))
+        # Negotiate (decided 2026-11-10): every other Build test passes, land is above my max but
+        # within negotiate_max_land_pct_of_arv; offer max_land_pct_of_arv of the ARV
+        cap, neg = box.get("max_land_pct_of_arv"), box.get("negotiate_max_land_pct_of_arv")
+        if cap is not None and neg is not None and arv and not my_misses(box | {"max_land_pct_of_arv": neg}, p, b, county):
+            offer = arv * cap / 100
+            at_price, at_offer = profit_pct(b, p["price"]), profit_pct(b, offer)
+            return done("negotiate", b, f"negotiate: {fmt(b)}, price {_money(p['price'])} = land "
+                                        f"{p['price'] / arv * 100:.1f}% of ARV {_money(arv)} (> {cap}%); offer "
+                                        f"{_money(offer)} ({cap}%); profit {_pct1(at_price)} at the price, "
+                                        f"{_pct1(at_offer)} at the offer",
+                        target_offer=offer, profit_pct_at_price=at_price, profit_pct_at_offer=at_offer)
         build_why = f"best use {fmt(b)} is mine but outside my buy box: {'; '.join(misses)}"
     else:
         build_why = None
@@ -339,7 +364,8 @@ def route_parcel(p: dict, options: list[dict], partner_rows: dict[str, list[dict
 def hoa_hold(row: dict, box: dict) -> dict:
     """my_buybox exclude_likely_hoa (decided 2026-11-10): a likely-HOA parcel is never Build (or
     build_fallback); it stays scored and goes to its own list, action likely_hoa."""
-    if not box.get("exclude_likely_hoa") or not row.get("likely_hoa") or row["action"] not in ("build", "build_fallback"):
+    if not box.get("exclude_likely_hoa") or not row.get("likely_hoa") \
+            or row["action"] not in ("build", "negotiate", "build_fallback"):
         return row
     return row | {"held_action": row["action"], "action": "likely_hoa",
                   "reason": f"likely HOA: {row.get('hoa_basis')} ({row.get('hoa_name')}, PIN {row.get('hoa_pin')}); "
@@ -412,7 +438,7 @@ YIELD_COLS = ["pin", "jurisdiction", "base_district", "net_sf", "if_crossed_net_
               "creek_divides", "apartments_possible", "place_type"]
 HOA_COLS = ["pin", "likely_hoa", "hoa_basis", "hoa_name", "hoa_pin", "plat_year", "pre_1980_subdivision"]
 OPT_COLS = ["pin", "option", "sewer", "kind", "product", "units", "rlv", "unit_price", "blank_inputs",
-            "price_per_sf", "revenue", "build_cost"]
+            "price_per_sf", "revenue", "build_cost", "profit"]
 
 
 def townhome_candidates(p: dict, partners: list[dict], county: str) -> list[dict]:

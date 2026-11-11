@@ -1,4 +1,4 @@
-"""CSV export of the ranked list: Build, check_land and likely_hoa parcels (or any actions) from `scores`.
+"""CSV export of the ranked list: Build, negotiate, check_land and likely_hoa parcels (or any actions) from `scores`.
 
 Run with `make export` (after `make route`), or `python -m ops.export --actions build check_land skip`.
 Writes exports/scores_<date>.csv (gitignored: it holds owner names), opens in Excel as is.
@@ -23,6 +23,8 @@ SELECT s.action, s.pin, s.site_address, s.municipality, r.zone_code, round(s.acr
        round(s.price_per_sf::numeric) AS comps_per_sf, round(s.arv::numeric) AS arv, round(s.price::numeric) AS price,
        r.price_basis, round(s.land_pct_of_arv::numeric, 1) AS land_pct_of_arv,
        round(s.build_cost::numeric) AS build_cost, round(s.cash_needed::numeric) AS cash_needed,
+       round(s.target_offer::numeric) AS target_offer, round(s.profit_pct_at_price::numeric, 1) AS profit_pct_at_price,
+       round(s.profit_pct_at_offer::numeric, 1) AS profit_pct_at_offer,
        round(s.rlv::numeric) AS rlv, round(s.score::numeric) AS score,
        round(s.land_value_ratio_pct::numeric) AS land_vs_neighbors_pct, s.held_action,
        s.creek_on_lot, round(s.stream_length_ft::numeric) AS creek_ft, s.power_line_near,
@@ -44,7 +46,7 @@ def export(engine, actions: list[str], out_dir: Path, today: date, s: str = "pub
         df = pd.read_sql(text(SQL.format(s=s)), conn, params={"actions": actions})
     whole = ["frontage_ft", "comps_per_sf", "arv", "price", "build_cost", "cash_needed", "rlv", "score",
              "land_vs_neighbors_pct", "best_comps_per_sf", "units",
-             "creek_ft", "power_line_ft"]
+             "creek_ft", "power_line_ft", "target_offer"]
     df[whole] = df[whole].astype("Float64").round().astype("Int64")     # whole dollars / feet in Excel
     df.insert(1, "rank", df.groupby("action").cumcount() + 1)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -59,7 +61,7 @@ def export(engine, actions: list[str], out_dir: Path, today: date, s: str = "pub
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--actions", nargs="+", default=["build", "check_land", "likely_hoa"])
+    ap.add_argument("--actions", nargs="+", default=["build", "negotiate", "check_land", "likely_hoa"])
     args = ap.parse_args()
     path, df = export(get_engine(), args.actions, ROOT / "exports", date.today())
     counts = ", ".join(f"{a} {n:,}" for a, n in df["action"].value_counts().items())

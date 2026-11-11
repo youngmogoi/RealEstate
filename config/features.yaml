@@ -52,7 +52,9 @@ owner_type_rules:
   - type: hoa
     # Homeowner and community associations (decided 2026-11-10). Before church_nonprofit, whose
     # ASSOCIATION / ASSN would catch them. Not "...ASSOCIATES" (companies) or civic associations.
-    words: ["HOMEOWNERS", "HOME OWNERS", "HOMEOWNER`S", "HOMEOWNERS`", "HOMEOWNRS", "HOA", "OWNERS ASSOCIATION",
+    # Bare HOA is also a Vietnamese given name (NGUYEN HOA, LE BINH HOA: a 1925 plat was flagged), so
+    # only "HOA INC" / "HOA I"; associations without INC are found by their common-area land use.
+    words: ["HOMEOWNERS", "HOME OWNERS", "HOMEOWNER`S", "HOMEOWNERS`", "HOMEOWNRS", "HOA INC", "HOA I", "OWNERS ASSOCIATION",
             "OWNERS ASSOC", "OWNERS ASSN", "OWNER`S ASSOCIATION", "OWNERS` ASSOCIATION", "P/O ASSOC",
             "COMMUNITY ASSOCIATION", "COMMUNITY ASSOC", "COMMUNITY ASSN", "PROPERTY OWNERS", "MASTER ASSOCIATION",
             "MASTER ASSOC", "MASTER HOMEOWNER`S", "TOWNHOME ASSOCIATION", "TOWNHOMES ASSOCIATION", "TOWNHOME ASSOC",

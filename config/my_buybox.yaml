@@ -16,6 +16,9 @@ min_resale_per_sf:
   sfh: 255
   duplex_triplex: 235
 max_land_pct_of_arv: 20            # price estimate <= this % of the option's ARV (its homes' sale value)
+# Negotiate tier (decided 2026-11-10): every other Build test passes and land is above
+# max_land_pct_of_arv but at most this -> action negotiate, offer max_land_pct_of_arv of ARV.
+negotiate_max_land_pct_of_arv: 25
 # For the deal sheet: cash needed = (build + land) x (1 - loan_to_cost). Not used to choose. (draft)
 loan_to_cost: 0.75
 counties: [Mecklenburg]

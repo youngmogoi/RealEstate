@@ -29,7 +29,8 @@ from ingest.db import copy_dataframe, get_engine
 from ingest.versioning import apply_versioned, row_hash
 
 INPUT_SQL = """
-SELECT p.pin, u.plat_ref, u.plat_year, f.owner_type, f.land_use, coalesce(p.owner_name, f.owner_name) AS owner_name,
+SELECT p.pin, u.plat_ref, u.plat_year, f.owner_type, f.land_use, coalesce(p.owner_name,
+       (SELECT min(o.owner_name) FROM {s}.parcel_owners o WHERE o.pin = p.pin)) AS owner_name,
        s.subdivision
 FROM {s}.parcels p
 LEFT JOIN {s}.parcel_utilities u USING (pin)

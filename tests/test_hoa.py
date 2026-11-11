@@ -20,6 +20,11 @@ def test_hoa_owner_names():
     # companies and churches keep their types
     assert owner_type("DAVIS LAKE ASSOCIATES LLC", rules) == "llc_corporate"
     assert owner_type("HOA HOLDINGS LLC", rules) == "llc_corporate"
+    # HOA is also a Vietnamese given name
+    for name in ["NGUYEN HOA", "LE BINH HOA", "TRUONG HOA THI", "LUU HOA"]:
+        assert owner_type(name, rules) == "individual", name
+    assert owner_type("MALLARD WOODS HOA INC", rules) == "hoa"
+    assert owner_type("YACHTSMAN ON LAKE WYLIE HOA I", rules) == "hoa"
     assert owner_type("FIRST BAPTIST CHURCH", rules) == "church_nonprofit"
 
 
